@@ -82,7 +82,10 @@ migration that is tested.
   `custom-` id. Names always go through `nameOf()` (src/lib/exercises.svelte.ts), never a stored name.
   A new catalogue exercise also needs its body regions in src/lib/catalog/regions.ts.
 - The body map on Progress shows training, never muscle size: work sets a week per region against a
-  general range (src/lib/coach/balance.ts). Goals per region are in `settings.regionGoals`.
+  general range (src/lib/coach/balance.ts). Goals per region are in `settings.regionGoals`. A goal also
+  steers the next workout (src/lib/coach/focus.ts): Focus adds one exercise per region while it's short
+  for the week, at most two a workout, the first on top and the next swapping a filler, and Maintain
+  drops fillers once its range is met. Main lifts and weights don't change.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
   stored, so they follow the interface language.

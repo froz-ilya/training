@@ -15,9 +15,12 @@
   /** Choices in the sheet; the first means no goal is stored. */
   const GOALS = ['usual', 'focus', 'maintain', 'ignore'] as const;
   const SHARES_SHOWN = 6;
+  /** Rows of other exercises before "Show all": a big muscle has twenty. */
+  const OTHERS_SHOWN = 6;
 
   let picked = $state<BodyRegion | null>(null);
   let open = $state(false);
+  let allOthers = $state(false);
 
   const enough = $derived(hasEnoughHistory(load));
   const rows = $derived(
@@ -34,6 +37,7 @@
 
   function pick(region: BodyRegion) {
     picked = region;
+    allOthers = false;
     open = true;
   }
 
@@ -108,6 +112,25 @@
           <p class="muted small reason">{t('progress.body.noSets')}</p>
         {/if}
       </div>
+
+      {#if row.others.length}
+        <div>
+          <div class="section-title">{t('progress.body.others')}</div>
+          <div class="list">
+            {#each allOthers ? row.others : row.others.slice(0, OTHERS_SHOWN) as exercise (exercise.id)}
+              <a class="list-item" href="#/exercise/{exercise.id}">
+                <span class="share">
+                  <span class="title">{nameOf(exercise)}</span>
+                  <span class="sub">{t(`exercises.equipment.${exercise.equipment}`)}</span>
+                </span>
+              </a>
+            {/each}
+          </div>
+          {#if !allOthers && row.others.length > OTHERS_SHOWN}
+            <button class="btn btn-ghost btn-block more" onclick={() => (allOthers = true)}>{t('exercise.all', { n: fmtNumber(row.others.length) })}</button>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </Sheet>
@@ -189,5 +212,8 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+  .more {
+    margin-top: 8px;
   }
 </style>

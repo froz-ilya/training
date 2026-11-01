@@ -14,7 +14,7 @@ const MIN_TRAINED_WEEKS = 4;
 const MIN_MUSCLE_WEEKS = 3;
 const DAYS_IN_WEEK = 7;
 /** Muscles that move between workout types, so they can be added to one that doesn't usually have them. */
-const SMALL: readonly Muscle[] = ['biceps', 'triceps', 'forearms', 'abs', 'calves'];
+export const SMALL: readonly Muscle[] = ['biceps', 'triceps', 'forearms', 'abs', 'calves'];
 
 export interface MuscleBudget {
   /** Exercises in a usual week. */
@@ -87,6 +87,10 @@ export interface WeekPlan {
   pool: string[];
   /** Exercises the user uses elsewhere that could be brought in, longest ago first. */
   borrowable: string[];
+  /** Fillers for a muscle that has had enough by the user's own goal: they go, and don't come back. */
+  enough?: (id: string) => boolean;
+  /** Fillers the user's own goal asks for: their muscle's usual count doesn't limit them. */
+  needed?: (id: string) => boolean;
 }
 
 export interface WeekFit {
@@ -102,7 +106,8 @@ export interface WeekFit {
  * goes. Free slots then take the variant's own exercises, a muscle that's due first, and last a small
  * muscle that's due from what the user does elsewhere. A muscle with no budget isn't limited, and one
  * usually done less than weekly still gets one exercise. A partner counts with its day however soon
- * that comes round, because a rotation doesn't keep to seven days. Not under `min`.
+ * that comes round, because a rotation doesn't keep to seven days. `enough` and `needed` carry the
+ * user's goals for parts of the body. Not under `min`.
  */
 export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exercises: Map<string, Exercise>): WeekFit {
   const muscleOf = (id: string) => exercises.get(id)!.muscle;
@@ -127,7 +132,7 @@ export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exer
   const leftOut: string[] = [];
   const exerciseIds = plan.exerciseIds.filter((id) => {
     if (plan.anchors.includes(id)) return true;
-    if (reached(muscleOf(id))) {
+    if (plan.enough?.(id) || (reached(muscleOf(id)) && !plan.needed?.(id))) {
       leftOut.push(id);
       return false;
     }
@@ -140,7 +145,7 @@ export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exer
     for (const id of candidates) {
       const muscle = muscleOf(id);
       if (exerciseIds.length >= plan.size) return;
-      if (exerciseIds.includes(id) || leftOut.includes(id) || reached(muscle) || !wanted(muscle)) continue;
+      if (exerciseIds.includes(id) || leftOut.includes(id) || plan.enough?.(id) || reached(muscle) || !wanted(muscle)) continue;
       if (due(muscle)) added.add(muscle);
       place(id);
       exerciseIds.push(id);

@@ -1,8 +1,9 @@
 import { groupOf, leadingGroup, type MuscleGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
-import type { Exercise, Muscle } from '../types';
+import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
 import { fitWeek, muscleBudgets, workedExercises } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
+import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
 import { expectedGapDays } from './frequency';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -27,6 +28,16 @@ export interface VariantReason {
   lead: string;
 }
 
+/** An exercise brought in because a Focus muscle is short this week. */
+export interface FocusPick {
+  exerciseId: string;
+  region: BodyRegion;
+  /** Not in the user's history yet, so it came from the catalogue. */
+  fresh: boolean;
+  /** The filler it took the place of; none when it went on top. */
+  replaced?: string;
+}
+
 export interface PlannedType {
   key: string;
   exerciseIds: string[];
@@ -42,6 +53,7 @@ export interface PlannedType {
   leftOut: string[];
   /** Muscles brought in because they're due this week. */
   added: Muscle[];
+  focus: FocusPick[];
   /** The muscles usually trained with each type, which are part of what it's called. */
   partners: Record<string, Muscle[]>;
 }
@@ -317,6 +329,15 @@ function borrowableExercises(workouts: RotationWorkout[], types: string[][], key
   return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
 }
 
+/** What these workouts really worked: longest ago first. */
+function doneExercises(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[] {
+  const lastUsed = new Map<string, string>();
+  for (const workout of workouts) {
+    for (const id of workedExercises(workout, exercises)) lastUsed.set(id, workout.date);
+  }
+  return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
+}
+
 /**
  * Which variant of a type each workout was, named by its lead. A lead seen once that shares most of
  * its exercises with a regular variant is that variant with a small change: the bench was taken, say.
@@ -363,10 +384,16 @@ function variantReason(workouts: RotationWorkout[], leads: string[], lead: strin
  * The next workout from the user's own rotation: the type's next variant, with the main lifts of
  * that variant's last workout kept and the remaining slots rotating through what they've done for it
  * recently. Same muscle first, then whatever was done longest ago. Those slots then fit the user's
- * week, which needs `pace` for today's date. `pick` swaps the suggested type or variant for another,
- * and everything else then works the same. Null with no history.
+ * week, which needs `pace` for today's date, and so do `goals`: see focus.ts. `pick` swaps the
+ * suggested type or variant for another, and everything else then works the same. Null with no history.
  */
-export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace, pick: NextPick = {}): PlannedType | null {
+export function planNextType(
+  workouts: RotationWorkout[],
+  exercises: Map<string, Exercise>,
+  pace?: RotationPace,
+  pick: NextPick = {},
+  goals: Partial<Record<BodyRegion, RegionGoal>> = {},
+): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
   const types = dayTypes(usable, exercises);
@@ -427,10 +454,13 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
   }
 
   const onOwnDays = new Set(ofType.map((w) => w.id));
+  const anchors = [...new Set([...kept, variant])];
+  const active = pace ? goals : {};
+  const week = pace ? weekSets(workouts, exercises, pace.today) : new Map<BodyRegion, number>();
   const fit = fitWeek(
     {
       exerciseIds: chosen,
-      anchors: [...new Set([...kept, variant])],
+      anchors,
       groups: typeGroups(key),
       partners: dayPartners,
       elsewhere: Object.entries(partners).flatMap(([type, muscles]) => (type === key ? [] : muscles)),
@@ -438,8 +468,26 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
       min: MIN_EXERCISES,
       pool,
       borrowable: borrowableExercises(usable, types, key, exercises),
+      enough: (id) => heldEnough(exercises.get(id)!, active, week),
+      needed: (id) => trainsShortFocus(exercises.get(id)!, active, week),
     },
     pace ? muscleBudgets(workouts, exercises, pace.today, (workout, muscle) => onOwnDays.has(workout.id) && dayPartners.includes(muscle)) : new Map(),
+    exercises,
+  );
+  const recent = doneExercises(usable, exercises);
+  const focus = applyFocus(
+    {
+      exerciseIds: fit.exerciseIds,
+      anchors,
+      groups: typeGroups(key),
+      partners: dayPartners,
+      leftOut: fit.leftOut,
+      max: MAX_EXERCISES,
+      recent,
+      older: doneExercises(workouts, exercises).filter((id) => !recent.includes(id)),
+    },
+    active,
+    week,
     exercises,
   );
 
@@ -451,9 +499,11 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
   const leftLongest = regularKeys(keys).sort((a, b) => keys.lastIndexOf(a) - keys.lastIndexOf(b));
   return {
     key,
-    exerciseIds: fit.exerciseIds,
+    exerciseIds: focus.exerciseIds,
     leftOut: fit.leftOut,
-    added: fit.added,
+    // A focus can take the slot of what was added, and then it isn't there to report.
+    added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
+    focus: focus.picks,
     partners,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,
     otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),

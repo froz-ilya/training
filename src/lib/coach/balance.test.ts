@@ -12,6 +12,7 @@ const sets = (exerciseId: string, count: number, date: string) => Array.from({ l
 
 const perWeek = (load: BodyLoad, region: BodyRegion) => load.regions.find((r) => r.region === region)!.perWeek;
 const shares = (load: BodyLoad, region: BodyRegion) => load.regions.find((r) => r.region === region)!.shares;
+const others = (load: BodyLoad, region: BodyRegion) => load.regions.find((r) => r.region === region)!.others.map((e) => e.id);
 
 describe('keptTrainingUntil', () => {
   const bench = exercises.get('barbell-bench-press')!;
@@ -49,6 +50,35 @@ describe('keptTrainingUntil', () => {
   it('has nothing to say for an exercise with no regions', () => {
     const cardio = { ...bench, id: 'custom-run', muscle: 'cardio' as const };
     expect(keptTrainingUntil(cardio, weekly('pec-deck', 6), from, TODAY, exercises)).toBeUndefined();
+  });
+});
+
+describe('other exercises for a region', () => {
+  const date = weeksAgo(0);
+
+  it('offers what is mainly for the region, leaving out helpers', () => {
+    const load = bodyLoad([], [], exercises, TODAY);
+    expect(others(load, 'chest')).toContain('pec-deck');
+    expect(others(load, 'chest')).not.toContain('close-grip-bench-press');
+  });
+
+  it('leaves out what the region already gets, and only that', () => {
+    const load = bodyLoad(sets('pec-deck', 3, date), [date], exercises, TODAY);
+    expect(others(load, 'chest')).not.toContain('pec-deck');
+    expect(others(load, 'chest')).toContain('barbell-bench-press');
+  });
+
+  it('starts with one of each equipment, so a short list shows the variety', () => {
+    const load = bodyLoad([], [], exercises, TODAY);
+    const lats = load.regions.find((r) => r.region === 'lats')!.others;
+    const kinds = new Set(lats.map((e) => e.equipment));
+    expect(new Set(lats.slice(0, kinds.size).map((e) => e.equipment))).toEqual(kinds);
+  });
+
+  it('includes a user’s own exercise', () => {
+    const own = { ...exercises.get('pec-deck')!, id: 'custom-chest' };
+    const load = bodyLoad([], [], new Map([...exercises, [own.id, own]]), TODAY);
+    expect(others(load, 'chest')).toContain('custom-chest');
   });
 });
 

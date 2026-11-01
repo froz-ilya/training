@@ -5,7 +5,7 @@ import { effectiveHistory } from '../db/repo';
 import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
-import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
+import type { Baseline, BodyRegion, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
 import { bodyLoad, keptTrainingUntil, type BodyLoad } from './balance';
 import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
@@ -387,6 +387,8 @@ export interface NextWorkout {
   /** Exercises taken out, and muscles brought in, to fit the user's usual week. */
   leftOut: Exercise[];
   added: Muscle[];
+  /** Exercises brought in for a Focus muscle, and what each replaced, if anything. */
+  focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise }[];
 }
 
 /**
@@ -405,7 +407,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
   const { perWeek } = training;
-  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick);
+  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick, settings.regionGoals);
   if (!plan) return null;
   const perExercise = group(sets, (s) => s.exerciseId);
   const body = bodyKg(settings.bodyWeightKg);
@@ -430,7 +432,8 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const typeName = (key: string): TypeName => ({ key, groups: typeGroups(key), partners: plan.partners[key] ?? [] });
   const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types.map(typeName) };
   const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
-  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added };
+  const focus = plan.focus.map(({ exerciseId, region, fresh, replaced }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined }));
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus };
 }
 
 // ---------- Saving ----------

@@ -44,8 +44,11 @@
     };
   });
 
+  /** An exercise lives in a workout through its sets, so one with no history starts with an empty set. */
+  const FIRST_SETS: SetPlan[] = [{ kind: 'work', weightKg: 0, reps: 0 }];
+
   function draft(plan: NextWorkout): WorkoutDraft {
-    return { exercises: plan.exercises.map((e) => ({ exerciseId: e.exercise.id, sets: e.sets })) };
+    return { exercises: plan.exercises.map((e) => ({ exerciseId: e.exercise.id, sets: e.sets.length ? e.sets : FIRST_SETS })) };
   }
 
   const TYPE_REASON_KEYS = {
@@ -59,6 +62,12 @@
     afterOneOff: 'coach.next.variant.afterOneOff',
     again: 'coach.next.variant.again',
   } as const;
+
+  function focusReason({ exercise, region, fresh, replaced }: NextWorkout['focus'][number]): string {
+    const names = { region: t(`exercises.region.${region}`), name: nameOf(exercise) };
+    if (replaced) return t(fresh ? 'coach.next.focus.swappedNew' : 'coach.next.focus.swapped', { ...names, old: nameOf(replaced) });
+    return t(fresh ? 'coach.next.focus.addedNew' : 'coach.next.focus.added', names);
+  }
 
   /** The heaviest work set: what the suggestion is really about. */
   const topOf = (sets: SetPlan[]) =>
@@ -91,8 +100,11 @@
         </li>
       {/each}
     </ul>
-    {#if plan.leftOut.length || plan.added.length}
+    {#if plan.leftOut.length || plan.added.length || plan.focus.length}
       <div class="budget">
+        {#each plan.focus as pick (pick.exercise.id)}
+          <p class="muted small">{focusReason(pick)}</p>
+        {/each}
         {#if plan.leftOut.length}
           <p class="muted small">{t('coach.next.budget.leftOut', { names: plan.leftOut.map(nameOf).join(', ') })}</p>
         {/if}

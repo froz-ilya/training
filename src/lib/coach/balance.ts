@@ -1,6 +1,6 @@
 import { BODY_REGIONS, regionsOf } from '../catalog/regions';
 import { daysBetween } from '../dates';
-import type { BodyRegion, Exercise, RegionGoal } from '../types';
+import type { BodyRegion, Equipment, Exercise, RegionGoal } from '../types';
 import { HELPER_WEIGHT } from './fatigue';
 
 /**
@@ -72,6 +72,8 @@ export interface RegionLoad {
   perWeek: number;
   /** Biggest part first. */
   shares: RegionShare[];
+  /** What else is mainly for this region, varied from the start: none of it is in `shares`. */
+  others: Exercise[];
 }
 
 export interface BodyLoad {
@@ -81,6 +83,18 @@ export interface BodyLoad {
 }
 
 const shareWeight = (share: RegionShare) => share.sets * (share.helper ? HELPER_WEIGHT : 1);
+
+/** One of each equipment, then a second of each, and so on: the catalogue keeps similar exercises side by side. */
+function mixEquipment(list: Exercise[]): Exercise[] {
+  const seen = new Map<Equipment, number>();
+  const turns = new Map<Exercise, number>();
+  for (const exercise of list) {
+    const turn = seen.get(exercise.equipment) ?? 0;
+    seen.set(exercise.equipment, turn + 1);
+    turns.set(exercise, turn);
+  }
+  return [...list].sort((a, b) => turns.get(a)! - turns.get(b)!);
+}
 
 /** Sets the regions got per week. Weeks run back from today, so the latest week is always a whole one. */
 export function bodyLoad(work: { date: string; exerciseId: string }[], workoutDates: string[], exercises: Map<string, Exercise>, today: string): BodyLoad {
@@ -106,7 +120,8 @@ export function bodyLoad(work: { date: string; exerciseId: string }[], workoutDa
     regions: BODY_REGIONS.map((region) => {
       const list = [...shares.get(region)!.values()].sort((a, b) => shareWeight(b) - shareWeight(a));
       const total = list.reduce((sum, share) => sum + shareWeight(share), 0);
-      return { region, perWeek: weeks ? Math.round(total / weeks) : 0, shares: list };
+      const others = [...exercises.values()].filter((e) => regionsOf(e).main.includes(region) && !shares.get(region)!.has(e.id));
+      return { region, perWeek: weeks ? Math.round(total / weeks) : 0, shares: list, others: mixEquipment(others) };
     }),
   };
 }

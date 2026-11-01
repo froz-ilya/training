@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(import.meta.dirname, '../../..');
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'dev-dist', '.claude']);
-const BINARY = /\.(png|woff2|ico)$/;
+const BINARY = /\.(png|webp|woff2|ico)$/;
 
 /** Telegram names export files messages.html, messages2.html and so on. */
 const EXPORT_FILE = /(^|\/)(messages\d*\.html|ChatExport[^/]*|result\.json)(\/|$)/;

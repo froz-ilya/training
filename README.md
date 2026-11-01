@@ -13,6 +13,13 @@ Settings now and then. A backup is one file you can keep in Files or iCloud Driv
 This repository contains only the app and a general exercise catalogue. It never contains anyone's
 workouts or chat exports.
 
+## Exercise pictures
+
+The pictures of machines come from [Wikimedia Commons](https://commons.wikimedia.org) and keep their
+own free licences (CC BY and CC BY-SA), not this repository's. They are resized for the app. Each
+exercise page credits its author and links the licence and the original;
+[src/lib/catalog/photos.ts](src/lib/catalog/photos.ts) lists them all.
+
 ## Install on iPhone
 
 1. Open the app's page in Safari.

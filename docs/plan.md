@@ -77,4 +77,4 @@ build, and a check of the new screens in a browser.
 
 ## Not in scope
 
-Accounts, sync, nutrition, photos, exercise images, keep-screen-on, spoken rest timer.
+Accounts, sync, nutrition, a user's own photos, keep-screen-on, spoken rest timer.

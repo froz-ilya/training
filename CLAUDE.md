@@ -81,6 +81,12 @@ migration that is tested.
 - Exercises: src/lib/catalog/exercises.ts holds the catalogue. A user's own exercises get a
   `custom-` id. Names always go through `nameOf()` (src/lib/exercises.svelte.ts), never a stored name.
   A new catalogue exercise also needs its body regions in src/lib/catalog/regions.ts.
+- Exercise photos: src/lib/catalog/photos.ts credits each picture in public/photos, and the exercise
+  page shows the credit. Pictures ship with the app, so nothing loads from another site. Use only
+  files with a free licence on Wikimedia Commons, checked on the file's own page, and look at the
+  picture: Commons titles can be wrong. No recognisable people. Never use a manufacturer's images:
+  Technogym's terms forbid copying them without written permission. A machine with no fitting
+  picture has none, which is better than showing the wrong machine.
 - The body map on Progress shows training, never muscle size: work sets a week per region against a
   general range (src/lib/coach/balance.ts). Goals per region are in `settings.regionGoals`. A goal also
   steers the next workout (src/lib/coach/focus.ts): Focus adds one exercise per region while it's short

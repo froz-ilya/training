@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Header from '../components/Header.svelte';
   import Skeleton from '../components/Skeleton.svelte';
+  import ExercisePhotoCard from '../components/exercises/ExercisePhotoCard.svelte';
   import PlateauOptions from '../components/coach/PlateauOptions.svelte';
   import SetSuggestion from '../components/coach/SetSuggestion.svelte';
   import StatusChip from '../components/coach/StatusChip.svelte';
@@ -15,6 +16,7 @@
     syncStallOutcomes,
     type ExerciseView,
   } from '../lib/coach/data';
+  import { photoOf } from '../lib/catalog/photos';
   import { needsOptions } from '../lib/coach/plateau';
   import { markSameMachine } from '../lib/coach/sameMachine';
   import { bodyKg, repRange, sessionStrength, topSet, weightStep } from '../lib/coach/strength';
@@ -46,6 +48,7 @@
   const body = $derived(bodyKg(settings.bodyWeightKg));
   const isTime = $derived(view?.exercise.load === 'time');
   const isBody = $derived(view?.exercise.load === 'body');
+  const photo = $derived(view ? photoOf(view.exercise.id) : undefined);
 
   const chartPoints = $derived.by((): TrendPoint[] => {
     if (!view) return [];
@@ -108,6 +111,8 @@
     <p class="empty">{t('exercise.notFound')}</p>
   {:else}
     <Header title={nameOf(view.exercise)} backTo="/exercises" />
+
+    {#if photo}<ExercisePhotoCard {photo} name={nameOf(view.exercise)} />{/if}
 
     {#if view.sessions.length}
       <div class="card status">

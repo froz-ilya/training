@@ -21,8 +21,10 @@
   let indicator = $state<{ x: number; y: number } | null>(null);
 
   function place() {
-    const pill = bar?.querySelector<HTMLElement>('.tab.active .pill');
-    indicator = pill ? { x: pill.offsetLeft, y: pill.offsetTop } : null;
+    const tab = bar?.querySelector<HTMLElement>('.tab.active');
+    const pill = tab?.querySelector<HTMLElement>('.pill');
+    // Measured in two steps because a tab is positioned, so the press animation can't change the result.
+    indicator = tab && pill ? { x: tab.offsetLeft + pill.offsetLeft, y: tab.offsetTop + pill.offsetTop } : null;
   }
 
   $effect(() => {
@@ -101,6 +103,7 @@
   }
   /* Sized by their labels, so the short ones leave room for the long ones on a narrow phone. */
   .tab {
+    position: relative;
     flex: 1 1 auto;
     max-width: 160px;
     display: flex;
@@ -134,7 +137,6 @@
     transition-duration: var(--dur-press);
   }
   .pill {
-    position: relative;
     display: grid;
     place-items: center;
     width: 54px;

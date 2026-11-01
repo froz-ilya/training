@@ -1,6 +1,6 @@
 import { fmtDate, toISODate } from '../dates';
 import { fmtNumber, t, tn } from '../i18n.svelte';
-import type { Load, StallAction } from '../types';
+import type { Load, Muscle, StallAction } from '../types';
 import type { ExerciseState, ExerciseStatus } from './status';
 import type { SessionSet } from './strength';
 import type { Suggestion } from './suggest';
@@ -43,6 +43,18 @@ export function statusText(status: ExerciseStatus, sessionsSince: number): strin
   if (!status.restartedOn) return stateText(status.state);
   const date = dayInText(status.restartedOn);
   return t(sessionsSince ? 'coach.restart.early' : 'coach.restart.waiting', { date });
+}
+
+/** Why a dip on the workout card is expected: this muscle has already worked. */
+export function earlierWorkText(muscle: Muscle): string {
+  return t('coach.fatigue.earlier', { muscle: t(`exercises.muscle.${muscle}`) });
+}
+
+/** The same work as a reason for a target, against the session it builds on. */
+function earlierWorkReason(muscle: Muscle, fewerReps: boolean, date: string | undefined): string {
+  const name = t(`exercises.muscle.${muscle}`);
+  if (date) return t(fewerReps ? 'coach.reason.earlierWorkReps.dated' : 'coach.reason.earlierWork.dated', { muscle: name, date });
+  return t(fewerReps ? 'coach.reason.earlierWorkReps' : 'coach.reason.earlierWork', { muscle: name });
 }
 
 /**
@@ -96,6 +108,8 @@ export function reasonText(s: Suggestion): string {
       return t(timed ? 'coach.reason.laterTime' : 'coach.reason.later');
     case 'earlierInWorkout':
       return date ? t('coach.reason.earlier.dated', { date }) : t('coach.reason.earlier');
+    case 'earlierWork':
+      return earlierWorkReason(s.params.muscle!, !timed && target < reps, date);
   }
 }
 

@@ -111,7 +111,10 @@ export interface StatusOptions {
   goal?: ExerciseGoal;
   /** The user said the fall isn't a machine change. */
   ignoreFall?: boolean;
-  /** Strength lost per position later in a workout: doing an exercise later isn't a drop. */
+  /**
+   * Strength lost per position later in a workout: doing an exercise later isn't a drop. A point's
+   * `priorSets` count as well, so neither is a session after hard work for the same muscle.
+   */
   positionCost?: number;
   /** Days a rotation normally takes at the user's weekly frequency. */
   expectedGapDays?: number;
@@ -146,7 +149,7 @@ const MIN_POINTS = 3;
 
 export function exerciseStatus(rawPoints: StrengthPoint[], options: StatusOptions): ExerciseStatus {
   const { today, goal, ignoreFall, positionCost, expectedGapDays = 0, restartedOn } = options;
-  const adjusted = positionCost ? adjustPoints(rawPoints, positionCost) : rawPoints;
+  const adjusted = positionCost || rawPoints.some((p) => p.priorSets) ? adjustPoints(rawPoints, positionCost ?? 0) : rawPoints;
   const allPoints = countedPoints(adjusted);
   const fall = ignoreFall ? -1 : findFall(allPoints);
   const maybeMachineChange = fall >= 0;

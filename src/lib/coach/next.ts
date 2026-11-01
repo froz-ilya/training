@@ -1,6 +1,7 @@
 import { groupOf, leadingGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
-import type { Exercise } from '../types';
+import type { Exercise, Muscle } from '../types';
+import { fitWeek, muscleBudgets, workedExercises } from './budget';
 import { expectedGapDays } from './frequency';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -36,6 +37,10 @@ export interface PlannedType {
   reason: VariantReason | null;
   /** The leads of the type's other variants, to switch to: the suggestion first. */
   otherLeads: string[];
+  /** Fillers taken out because their muscle has had enough this week. */
+  leftOut: string[];
+  /** Muscles brought in because they're due this week. */
+  added: Muscle[];
 }
 
 /** Another type or variant than the suggested one, for today only. Unknown ones are ignored. */
@@ -168,10 +173,19 @@ function typeReason(keys: string[], key: string): TypeReason | null {
 
 /** The exercise a workout is built around: the first worked one of its type, so a warm-up doesn't count. */
 function leadOf(workout: RotationWorkout, key: string, exercises: Map<string, Exercise>): string {
-  const known = workout.exerciseIds.filter((id) => exercises.has(id));
-  const worked = known.filter((id) => workout.workSets[id]);
-  const main = worked.length ? worked : known;
+  const main = workedExercises(workout, exercises);
   return main.find((id) => groupOf(exercises.get(id)!.muscle) === key) ?? main[0];
+}
+
+/** What the user does in this type, or after the main lifts in another: longest ago first. */
+function borrowableExercises(workouts: RotationWorkout[], keys: string[], key: string, exercises: Map<string, Exercise>): string[] {
+  const lastUsed = new Map<string, string>();
+  workouts.forEach((workout, i) => {
+    workedExercises(workout, exercises).forEach((id, at) => {
+      if (keys[i] === key || at >= ANCHORS) lastUsed.set(id, workout.date);
+    });
+  });
+  return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
 }
 
 /**
@@ -219,8 +233,9 @@ function variantReason(workouts: RotationWorkout[], leads: string[], lead: strin
 /**
  * The next workout from the user's own rotation: the type's next variant, with the main lifts of
  * that variant's last workout kept and the remaining slots rotating through what they've done for it
- * recently. Same muscle first, then whatever was done longest ago. `pick` swaps the suggested type
- * or variant for another, and everything else then works the same. Null with no history.
+ * recently. Same muscle first, then whatever was done longest ago. Those slots then fit the user's
+ * week, which needs `pace` for today's date. `pick` swaps the suggested type or variant for another,
+ * and everything else then works the same. Null with no history.
  */
 export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace, pick: NextPick = {}): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
@@ -263,6 +278,20 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
     if (!chosen.includes(id)) chosen.push(id);
   }
 
+  const fit = fitWeek(
+    {
+      exerciseIds: chosen,
+      anchors: [...new Set([...kept, variant])],
+      type: key,
+      size,
+      min: MIN_EXERCISES,
+      pool,
+      borrowable: borrowableExercises(usable, keys, key, exercises),
+    },
+    pace ? muscleBudgets(workouts, exercises, pace.today) : new Map(),
+    exercises,
+  );
+
   const regular = repeated(leads);
   const newestFirst = [...leads].reverse();
   const otherLeads = [...new Set([suggested, ...newestFirst.filter((l) => regular.includes(l)), ...newestFirst])]
@@ -271,7 +300,9 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
   const leftLongest = regularKeys(keys).sort((a, b) => keys.lastIndexOf(a) - keys.lastIndexOf(b));
   return {
     key,
-    exerciseIds: chosen,
+    exerciseIds: fit.exerciseIds,
+    leftOut: fit.leftOut,
+    added: fit.added,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,
     otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),
     reason: variant === suggested ? variantReason(ofType, leads, variant, key, exercises) : null,

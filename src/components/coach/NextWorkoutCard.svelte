@@ -91,6 +91,16 @@
         </li>
       {/each}
     </ul>
+    {#if plan.leftOut.length || plan.added.length}
+      <div class="budget">
+        {#if plan.leftOut.length}
+          <p class="muted small">{t('coach.next.budget.leftOut', { names: plan.leftOut.map(nameOf).join(', ') })}</p>
+        {/if}
+        {#if plan.added.length}
+          <p class="muted small">{t('coach.next.budget.added', { names: plan.added.map((muscle) => t(`exercises.muscle.${muscle}`)).join(', ') })}</p>
+        {/if}
+      </div>
+    {/if}
     {#if plan.otherTypes.length || plan.otherVariants.length}
       <div class="switches">
         {#if plan.otherTypes.length}
@@ -160,6 +170,12 @@
     flex-shrink: 0;
     max-width: 60%;
     text-align: right;
+  }
+  .budget {
+    margin: -8px 0 12px;
+  }
+  .budget p {
+    margin: 2px 0 0;
   }
   .switches {
     margin: -8px 0 8px;

@@ -1,7 +1,7 @@
 import { daysBetween } from '../dates';
-import type { Exercise, ExerciseSettings, Load, SetKind } from '../types';
+import type { Exercise, ExerciseSettings, Load, Muscle, SetKind } from '../types';
 import type { ExerciseStatus } from './status';
-import { median } from './position';
+import { DEFAULT_POSITION_COST, expectedLoss, median } from './position';
 import {
   bodyKg,
   countedSessions,
@@ -11,6 +11,7 @@ import {
   topSet,
   typicalGap,
   weightStep,
+  type PriorWork,
   type Session,
   type SessionSet,
 } from './strength';
@@ -39,7 +40,8 @@ export type ReasonCode =
   | 'lighterWeek'
   | 'pain'
   | 'laterInWorkout'
-  | 'earlierInWorkout';
+  | 'earlierInWorkout'
+  | 'earlierWork';
 
 export interface Suggestion {
   weightKg: number;
@@ -59,6 +61,8 @@ export interface Suggestion {
     load: Load;
     /** The session this builds on, when it isn't the latest one. */
     baseDate?: string;
+    /** The muscle with more earlier work today, for the 'earlierWork' reason. */
+    muscle?: Muscle;
   };
 }
 
@@ -70,6 +74,10 @@ export interface SuggestOptions {
   lighterWeek?: boolean;
   /** Where the exercise sits in today's workout, from 1. */
   position?: number;
+  /** Earlier work in today's planned order. */
+  priorWork?: PriorWork | null;
+  /** Strength lost per position later in a workout. */
+  positionCost?: number;
   /** Days a rotation normally takes at the user's weekly frequency. */
   expectedGapDays?: number;
   /** Used to compare bodyweight sets. */
@@ -97,6 +105,13 @@ const TIME_STEP_SECONDS = 5;
 const RECENT_SESSIONS = 4;
 /** Reps a later position takes off, at most. */
 const MAX_LATER_DROP = 2;
+/**
+ * How much more today's order must be expected to cost than the base session's before the target
+ * stops rising: twice the 1% day-to-day band, so comparable fatigue leaves the usual increases alone.
+ */
+const FATIGUE_HOLD = 0.02;
+/** And before the target gives up a rep: about two reps' worth in a set of 10, of which it takes one. */
+const FATIGUE_DROP = 0.05;
 const DEFAULT_WORK_SETS = 3;
 /** Sessions the usual number of work sets comes from. */
 const USUAL_SETS_SESSIONS = 6;
@@ -210,7 +225,7 @@ function timedSuggestion(last: Session, top: SessionSet, reason: ReasonCode, par
  * nothing to go on, and a guessed weight for someone's first session wouldn't be safe.
  */
 export function suggestSets(exercise: Exercise, history: Session[], options: SuggestOptions): Suggestion | null {
-  const { today, setting, status, lighterWeek, position, expectedGapDays = 0, body } = options;
+  const { today, setting, status, lighterWeek, position, priorWork, positionCost = DEFAULT_POSITION_COST, expectedGapDays = 0, body } = options;
   // An off day says nothing about the next session, so it's never the starting point.
   const counted = countedSessions(history, exercise.load, bodyKg(body));
   const last = baseSession(counted, position);
@@ -223,6 +238,12 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
   const days = daysBetween(latest.date, today);
   /** Positive when today's slot is later in the workout than the session this builds on. */
   const slots = position === undefined ? 0 : position - last.position;
+  /** What today's order is expected to cost beyond the session this builds on, rounded so limits hold exactly. */
+  const extraLoss =
+    position === undefined || !priorWork
+      ? 0
+      : Math.round((expectedLoss(position, positionCost, priorWork.sets) - expectedLoss(last.position, positionCost, last.priorWork?.sets)) * 1000) / 1000;
+  const moreWork = extraLoss >= FATIGUE_HOLD;
   const step = weightStep(exercise, history, setting);
   const lastSeconds = top.seconds ?? 0;
   const baseDate = last === latest ? undefined : last.date;
@@ -243,6 +264,7 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
       const reason = hold ? 'maintain' : latest.pain ? 'pain' : 'laterInWorkout';
       return timedSuggestion(last, top, reason, { ...params, target: lastSeconds });
     }
+    if (moreWork) return timedSuggestion(last, top, 'earlierWork', { ...params, target: lastSeconds, muscle: priorWork?.muscle });
     return timedSuggestion(last, top, 'moreTime', { ...params, target: lastSeconds + TIME_STEP_SECONDS });
   }
 
@@ -302,11 +324,18 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
     weightKg = top.weightKg;
     reps = Math.max(1, top.reps - repDrop);
     reason = 'laterInWorkout';
-  } else if (slots < 0 && (reason === 'up' || reason === 'moreReps')) {
+  } else if (moreWork && (reason === 'up' || reason === 'moreReps' || reason === 'hold')) {
+    // Never on top of the later slot above, and never a lighter weight: the same numbers, at most a rep fewer.
+    repDrop = extraLoss >= FATIGUE_DROP ? 1 : 0;
+    weightKg = top.weightKg;
+    reps = Math.max(1, top.reps - repDrop);
+    reason = 'earlierWork';
+  } else if (slots < 0 && extraLoss <= 0 && (reason === 'up' || reason === 'moreReps')) {
     reason = 'earlierInWorkout';
   }
 
   const work = workPlan(last, top, weightKg, reps, step, repDrop, usualWorkSets(history));
   const warm = warmUps(last, weightKg, top.weightKg, step, exercise.compound, top.level);
-  return { weightKg, reps, sets: [...warm, ...work], reason, params: { ...params, target: reps } };
+  const muscle = reason === 'earlierWork' ? { muscle: priorWork?.muscle } : {};
+  return { weightKg, reps, sets: [...warm, ...work], reason, params: { ...params, target: reps, ...muscle } };
 }

@@ -1,6 +1,6 @@
-import type { Load } from '../types';
-import { positionFactor } from './position';
-import { bodyKg, estimateSet, isMeasured, RAMP_SHARE, type SessionSet, type StrengthPoint } from './strength';
+import type { Load, Muscle } from '../types';
+import { expectedLoss, lossFactor, positionFactor } from './position';
+import { bodyKg, estimateSet, isMeasured, RAMP_SHARE, type PriorWork, type SessionSet, type StrengthPoint } from './strength';
 
 /** Comparing today's sets with last time's, for the marks in the workout logger. */
 
@@ -15,14 +15,16 @@ export interface SetComparison {
 }
 
 export interface ExerciseComparison {
-  /** 'expected': lower, but no more than exercise order or a tagged off day explains. */
+  /** 'expected': lower, but no more than exercise order, earlier work or a tagged off day explains. */
   trend: Trend | 'expected';
   /** Change in estimated strength of work sets done so far, against the same number of previous work sets. */
   percent: number;
-  /** What exercise order alone predicts, negative when later. */
+  /** What exercise order and earlier work predict against last time, negative when harder. */
   expectedPercent: number;
   position: number;
   previousPosition: number | null;
+  /** The muscle whose earlier work explains an expected dip, when order alone doesn't. */
+  fatigued?: Muscle;
 }
 
 /** A change within this many percent is ordinary day-to-day noise. */
@@ -116,9 +118,19 @@ export function beatsAcrossSets(current: StrengthPoint, previous: StrengthPoint)
 export function compareExercise(
   current: SessionSet[],
   previous: SessionSet[],
-  options: { position: number; previousPosition: number | null; cost: number; load: Load; bodyKg: number; offDay?: boolean },
+  options: {
+    position: number;
+    previousPosition: number | null;
+    cost: number;
+    load: Load;
+    bodyKg: number;
+    offDay?: boolean;
+    /** Earlier work today, and before this exercise in the session compared with. */
+    priorWork?: PriorWork | null;
+    previousPriorWork?: PriorWork | null;
+  },
 ): ExerciseComparison | null {
-  const { position, previousPosition, cost, load, bodyKg, offDay } = options;
+  const { position, previousPosition, cost, load, bodyKg, offDay, priorWork, previousPriorWork } = options;
   const estimate = (set: SessionSet) => estimateSet(set, load, bodyKg);
   const done = workOnly(current).filter((s) => estimate(s) > 0);
   const before = workOnly(previous).filter((s) => estimate(s) > 0).slice(0, done.length);
@@ -128,12 +140,20 @@ export function compareExercise(
   const matched = done.slice(0, before.length);
   if (!matched.every((s, i) => sameLevel(s, before[i]))) return null;
   const percent = round((mean(matched.map(estimate)) / mean(before.map(estimate)) - 1) * 100, 1);
-  const expectedPercent = previousPosition === null ? 0 : round((positionFactor(position, previousPosition, cost) - 1) * 100, 1);
+  const percentOf = (factor: number) => (previousPosition === null ? 0 : round((factor - 1) * 100, 1));
+  const reference = previousPosition ?? position;
+  const orderPercent = percentOf(positionFactor(position, reference, cost));
+  // Against the session compared with: the same work done first both times explains no dip.
+  const loss = expectedLoss(position, cost, priorWork?.sets);
+  const expectedPercent = percentOf(lossFactor(loss, expectedLoss(reference, cost, previousPriorWork?.sets)));
 
   let trend: ExerciseComparison['trend'] = 'same';
+  let fatigued: Muscle | undefined;
   if (percent > SAME_BAND || moreRepsAtSameWeight(matched, before)) trend = 'up';
   else if (percent < -SAME_BAND) {
-    trend = offDay || (expectedPercent < 0 && percent >= expectedPercent - SAME_BAND) ? 'expected' : 'down';
+    const explained = expectedPercent < 0 && percent >= expectedPercent - SAME_BAND;
+    trend = offDay || explained ? 'expected' : 'down';
+    if (explained && expectedPercent < orderPercent) fatigued = priorWork?.muscle;
   }
-  return { trend, percent, expectedPercent, position, previousPosition };
+  return { trend, percent, expectedPercent, position, previousPosition, ...(fatigued ? { fatigued } : {}) };
 }

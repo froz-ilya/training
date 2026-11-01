@@ -58,6 +58,8 @@ export interface Exercise {
   aliases?: string[];
   /** Done at a bar or platform height the user sets, which changes how hard it is. */
   levels?: boolean;
+  /** Muscles that also do real work here, besides `muscle`. */
+  helpers?: Muscle[];
 }
 
 /** An exercise a user added; its id starts with "custom-" so it never clashes with the catalogue. */

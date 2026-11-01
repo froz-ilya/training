@@ -1,6 +1,6 @@
 import { daysBetween } from '../dates';
 import { median } from './position';
-import type { Baseline, Equipment, Exercise, ExerciseNote, ExerciseSettings, Load, SetKind } from '../types';
+import type { Baseline, Equipment, Exercise, ExerciseNote, ExerciseSettings, Load, Muscle, SetKind } from '../types';
 
 /** One exercise in one finished workout. */
 export interface Session {
@@ -15,6 +15,16 @@ export interface Session {
   offDay?: boolean;
   /** The user noted pain in this session. */
   pain?: boolean;
+  /** Earlier work in that workout on the muscles this exercise needs. Worked out on reading. */
+  priorWork?: PriorWork;
+}
+
+/** Hard sets done earlier in a workout that hit an exercise's muscles. See priorWork(). */
+export interface PriorWork {
+  /** Weighted: a set that hits the muscle only partly counts for part of one. */
+  sets: number;
+  /** The muscle most of that work went to, for telling the user why. */
+  muscle: Muscle;
 }
 
 export interface SessionSet {
@@ -45,6 +55,8 @@ export interface StrengthPoint {
   work?: WorkSet[];
   /** Where the exercise sat in the workout, when known. */
   position?: number;
+  /** Weighted sets done earlier in the workout for the same muscles, when there were any. */
+  priorSets?: number;
   /** A tag says this session doesn't reflect the exercise. */
   offDay?: boolean;
 }
@@ -194,6 +206,7 @@ export function strengthPoints(sessions: Session[], load: Load, body: number): S
       reps: load === 'time' ? 0 : reps,
     }));
     const point: StrengthPoint = { date: session.date, value, work, position: session.position };
+    if (session.priorWork) point.priorSets = session.priorWork.sets;
     if (session.offDay) point.offDay = true;
     points.push(point);
   }

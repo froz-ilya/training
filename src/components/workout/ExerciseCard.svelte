@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { liveQuery } from 'dexie';
   import { untrack } from 'svelte';
   import Icon from '../Icon.svelte';
   import SetRow from './SetRow.svelte';
   import NoteChips from '../notes/NoteChips.svelte';
   import SetSuggestion from '../coach/SetSuggestion.svelte';
   import { compareExercise, compareSet, pairSets } from '../../lib/coach/compare';
+  import { loadPriorWork, type PriorWorkPair } from '../../lib/coach/data';
+  import { earlierWorkText } from '../../lib/coach/text';
   import { fmtDate, toISODate } from '../../lib/dates';
   import { collapse, reducedMotion } from '../../lib/motion';
   import { nameOf } from '../../lib/exercises.svelte';
@@ -74,13 +77,40 @@
   const warmups = $derived(entry.sets.filter((s) => s.kind === 'warmup'));
   const workSets = $derived(entry.sets.filter((s) => s.kind === 'work'));
 
+  /** Earlier work for this exercise's muscles, which follows today's sets as they're ticked. */
+  let prior = $state<PriorWorkPair | null>(null);
+  const workoutId = $derived(entry.sets[0]?.workoutId);
+  const entryNumber = $derived(entry.entry);
+  const exerciseId = $derived(entry.exerciseId);
+  const lastWorkoutId = $derived(last?.workoutId);
+
+  $effect(() => {
+    const [today, card, id, previous] = [workoutId, entryNumber, exerciseId, lastWorkoutId];
+    prior = null;
+    if (!today || !previous) return;
+    const sub = liveQuery(() => loadPriorWork(id, today, card, previous)).subscribe({
+      next: (value) => (prior = value),
+      error: (e) => console.error(e),
+    });
+    return () => sub.unsubscribe();
+  });
+
   /** Done work sets against the same sets last time; nothing until the first one is done. */
   const trend = $derived.by(() => {
     if (!last) return null;
     const done = workSets.filter((s) => s.done);
     const before = done.map(previousOf).filter((s) => s !== undefined);
     if (!done.length || !before.length) return null;
-    return compareExercise(done, before, { position, previousPosition: last.position, cost, load, bodyKg: body, offDay });
+    return compareExercise(done, before, {
+      position,
+      previousPosition: last.position,
+      cost,
+      load,
+      bodyKg: body,
+      offDay,
+      priorWork: prior?.today,
+      previousPriorWork: prior?.previous,
+    });
   });
   const calm = $derived(trend?.trend === 'expected');
 
@@ -186,6 +216,9 @@
     <p class="context order">
       {t('workout.orderChanged', { now: String(position), then: String(last.position) })}{#if later}. {t('workout.laterNote')}{/if}
     </p>
+  {/if}
+  {#if trend?.fatigued}
+    <p class="context">{earlierWorkText(trend.fatigued)}</p>
   {/if}
 
   {#if onsuggest}

@@ -47,6 +47,40 @@ describe('catalogue', () => {
     for (const id of ['barbell-squat', 'leg-press', 'seated-dip-machine', 'lat-pulldown']) expect(catalogExercise(id)?.load, id).toBe('weight');
   });
 
+  describe('helper muscles', () => {
+    const withHelpers = CATALOG.filter((e) => e.helpers);
+
+    it('uses known muscles only', () => {
+      for (const exercise of withHelpers) {
+        for (const muscle of exercise.helpers ?? []) expect(MUSCLES, exercise.id).toContain(muscle);
+      }
+    });
+
+    it('never repeats the main muscle', () => {
+      for (const exercise of withHelpers) expect(exercise.helpers, exercise.id).not.toContain(exercise.muscle);
+    });
+
+    it('has no duplicates and no empty lists', () => {
+      for (const exercise of withHelpers) {
+        const helpers = exercise.helpers ?? [];
+        expect(helpers.length, exercise.id).toBeGreaterThan(0);
+        expect(new Set(helpers).size, exercise.id).toBe(helpers.length);
+      }
+    });
+
+    it('lists triceps on every compound barbell chest press', () => {
+      const presses = CATALOG.filter((e) => e.muscle === 'chest' && e.equipment === 'barbell' && e.compound);
+      expect(presses.map((e) => e.id)).toContain('barbell-bench-press');
+      for (const exercise of presses) expect(exercise.helpers, exercise.id).toContain('triceps');
+    });
+
+    it('lists biceps on rows and vertical pulls', () => {
+      const pulls = CATALOG.filter((e) => e.muscle === 'back' && e.compound && /row|pull-?up|pulldown|chin-up/.test(e.id));
+      expect(pulls.map((e) => e.id)).toEqual(expect.arrayContaining(['barbell-row', 'seated-cable-row', 'pull-up', 'chin-up', 'lat-pulldown']));
+      for (const exercise of pulls) expect(exercise.helpers, exercise.id).toContain('biceps');
+    });
+  });
+
   it('finds an exercise by id', () => {
     expect(catalogExercise('deadlift')?.names.de).toBe('Kreuzheben');
     expect(catalogExercise('nope')).toBeUndefined();

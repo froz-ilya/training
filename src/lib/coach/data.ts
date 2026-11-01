@@ -5,7 +5,8 @@ import { effectiveHistory } from '../db/repo';
 import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
-import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, StallAction, StallRecord, WorkoutSet } from '../types';
+import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
+import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
 import { planNextType, rotationTypeCount, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
 import { alternateRange, lighterWeekActive, resolveOutcomes } from './plateau';
@@ -13,7 +14,7 @@ import { countRecent, groupSummaries, type GroupSummary, type Overview } from '.
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
 import { exerciseStatus, type ExerciseStatus } from './status';
-import { atLatestLevel, bodyKg, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type Session, type StrengthPoint } from './strength';
+import { atLatestLevel, bodyKg, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
 import { suggestSets, type SetPlan, type Suggestion } from './suggest';
 import { calendarWeeks, newBests, weeklyVolume, type CalendarDay, type NewBest, type WeekVolume } from './summary';
 
@@ -65,8 +66,15 @@ type NoteIndex = Map<string, ExerciseNote[]>;
 const noteKey = (workoutId: string, exerciseId: string) => `${workoutId}:${exerciseId}`;
 const noteIndex = (notes: ExerciseNote[]): NoteIndex => group(notes, (n) => noteKey(n.workoutId, n.exerciseId));
 
+/** Whole workouts, for working out what came before an exercise in each. */
+interface Surroundings {
+  perWorkout: Map<string, WorkoutSet[]>;
+  exercises: Map<string, Exercise>;
+  body: number;
+}
+
 /** Finished sets into per-exercise sessions, oldest first. `ranks` covers whole workouts. */
-function toSessions(sets: WorkoutSet[], ranks: Ranks, notes?: NoteIndex): Session[] {
+function toSessions(sets: WorkoutSet[], ranks: Ranks, notes?: NoteIndex, around?: Surroundings): Session[] {
   const sorted = [...sets].sort((a, b) => a.date.localeCompare(b.date) || a.entry - b.entry || a.order - b.order);
   const sessions = new Map<string, Session>();
   for (const set of sorted) {
@@ -79,6 +87,11 @@ function toSessions(sets: WorkoutSet[], ranks: Ranks, notes?: NoteIndex): Sessio
         session.notes = own;
         session.offDay = isOffDay(own, settings.customTags);
         session.pain = hasPain(own);
+      }
+      const exercise = around?.exercises.get(set.exerciseId);
+      if (around && exercise) {
+        const prior = priorWork(exercise, around.perWorkout.get(set.workoutId) ?? [], set.entry, around.exercises, around.body);
+        if (prior) session.priorWork = prior;
       }
     }
     session.sets.push({ kind: set.kind, weightKg: set.weightKg, reps: set.reps, seconds: set.seconds, failure: set.failure, level: set.level });
@@ -93,6 +106,7 @@ function buildView(
   today: string,
   training: Training,
   position?: number,
+  prior?: PriorWork | null,
 ): ExerciseView {
   const body = bodyKg(settings.bodyWeightKg);
   const setting = stored.settings.get(exercise.id);
@@ -110,6 +124,8 @@ function buildView(
     status,
     lighterWeek: lighterWeekActive(records, today),
     position,
+    priorWork: prior,
+    positionCost,
     expectedGapDays,
     body,
   });
@@ -196,22 +212,68 @@ export async function loadPositionCost(): Promise<number> {
   return (await loadTraining()).positionCost;
 }
 
+/**
+ * Earlier work planned before this exercise in today's workout, done or not, so the target doesn't
+ * move as sets are ticked. The workout is the open one with this exercise at this place, the
+ * active one first.
+ */
+async function plannedPriorWork(exercise: Exercise, position: number, exercises: Map<string, Exercise>): Promise<PriorWork | null> {
+  const open = await db.workouts.where('status').anyOf('active', 'planned').toArray();
+  for (const workout of open.sort((a, b) => a.status.localeCompare(b.status))) {
+    const rows = await db.sets.where('workoutId').equals(workout.id).toArray();
+    const entry = [...new Set(rows.map((s) => s.entry))].sort((a, b) => a - b)[position - 1];
+    if (rows.find((s) => s.entry === entry)?.exerciseId !== exercise.id) continue;
+    return priorWork(exercise, rows, entry, exercises, bodyKg(settings.bodyWeightKg));
+  }
+  return null;
+}
+
+/** Earlier work before an exercise, today and in the session it's compared with. */
+export interface PriorWorkPair {
+  today: PriorWork | null;
+  previous: PriorWork | null;
+}
+
+/**
+ * For the workout card. Today counts only sets already done above this card, and a live query of
+ * this follows them as they're ticked.
+ */
+export async function loadPriorWork(exerciseId: string, workoutId: string, entry: number, previousWorkoutId: string): Promise<PriorWorkPair> {
+  const exercises = await exerciseMap();
+  const exercise = exercises.get(exerciseId);
+  if (!exercise) return { today: null, previous: null };
+  const body = bodyKg(settings.bodyWeightKg);
+  const [rows, previousRows] = await Promise.all([
+    db.sets.where('workoutId').equals(workoutId).toArray(),
+    db.sets.where('workoutId').equals(previousWorkoutId).toArray(),
+  ]);
+  const previousEntry = Math.min(...previousRows.filter((s) => s.exerciseId === exerciseId).map((s) => s.entry));
+  return {
+    today: priorWork(exercise, rows.filter((s) => s.done), entry, exercises, body),
+    previous: priorWork(exercise, previousRows, previousEntry, exercises, body),
+  };
+}
+
 /** One exercise, for its page, or for a place in a workout when `position` is given. */
 export async function loadExerciseView(id: string, position?: number): Promise<ExerciseView | null> {
   const exercise = catalogExercise(id) ?? (await db.customExercises.get(id));
   if (!exercise) return null;
-  const [rows, finished, stored, training, notes] = await Promise.all([
+  const [rows, finished, stored, training, notes, exercises] = await Promise.all([
     db.sets.where('exerciseId').equals(id).toArray(),
     db.workouts.where('status').equals('done').primaryKeys(),
     readStored(),
     loadTraining(),
     db.exerciseNotes.where('exerciseId').equals(id).toArray(),
+    exerciseMap(),
   ]);
   const done = new Set(finished);
   const own = await effectiveHistory(rows.filter((s) => s.done && done.has(s.workoutId)));
-  // Positions depend on the other exercises in those workouts.
+  // Positions and earlier work depend on the other exercises in those workouts.
   const around = await db.sets.where('workoutId').anyOf([...new Set(own.map((s) => s.workoutId))]).toArray();
-  return buildView(exercise, toSessions(own, entryRanks(around), noteIndex(notes)), stored, toISODate(), training, position);
+  const surroundings = { perWorkout: group(around, (s) => s.workoutId), exercises, body: bodyKg(settings.bodyWeightKg) };
+  const sessions = toSessions(own, entryRanks(around), noteIndex(notes), surroundings);
+  const prior = position === undefined ? null : await plannedPriorWork(exercise, position, exercises);
+  return buildView(exercise, sessions, stored, toISODate(), training, position, prior);
 }
 
 export interface ProgressData {
@@ -241,10 +303,11 @@ export async function loadProgress(): Promise<ProgressData> {
   const body = bodyKg(settings.bodyWeightKg);
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
+  const around = { perWorkout: group(sets, (s) => s.workoutId), exercises, body };
   const views: ExerciseView[] = [];
   for (const [id, rows] of group(sets, (s) => s.exerciseId)) {
     const exercise = exercises.get(id);
-    if (exercise) views.push(buildView(exercise, toSessions(rows, ranks, noted), stored, today, training));
+    if (exercise) views.push(buildView(exercise, toSessions(rows, ranks, noted, around), stored, today, training));
   }
   const allBests = views
     .flatMap((v) => newBests(v.compared, v.exercise.load, body).map((b) => ({ ...b, exercise: v.exercise })))
@@ -288,6 +351,9 @@ export interface NextWorkout {
   reason: { kind: VariantReason['kind']; after: Exercise; lead: Exercise } | null;
   /** The lead exercises of the type's other variants, to switch to. */
   otherVariants: Exercise[];
+  /** Exercises taken out, and muscles brought in, to fit the user's usual week. */
+  leftOut: Exercise[];
+  added: Muscle[];
 }
 
 /**
@@ -309,20 +375,26 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick);
   if (!plan) return null;
   const perExercise = group(sets, (s) => s.exerciseId);
+  const body = bodyKg(settings.bodyWeightKg);
+  const around = { perWorkout: group(sets, (s) => s.workoutId), exercises, body };
   const list: NextWorkout['exercises'] = [];
+  const planned: WorkoutRow[] = [];
   for (const id of plan.exerciseIds) {
     const exercise = exercises.get(id);
     if (!exercise) continue;
     const position = list.length + 1;
-    const view = buildView(exercise, toSessions(perExercise.get(id) ?? [], ranks, noted), stored, today, training, position);
-    list.push({ exercise, sets: view.suggestion?.sets ?? [], suggestion: view.suggestion });
+    const prior = priorWork(exercise, planned, position, exercises, body);
+    const view = buildView(exercise, toSessions(perExercise.get(id) ?? [], ranks, noted, around), stored, today, training, position, prior);
+    const sets = view.suggestion?.sets ?? [];
+    list.push({ exercise, sets, suggestion: view.suggestion });
+    planned.push(...sets.map((set) => ({ ...set, exerciseId: id, entry: position })));
   }
   const groups = mainGroups(list.map((e) => ({ muscle: e.exercise.muscle, sets: e.sets.filter((s) => s.kind === 'work').length })));
   const dates = [...workouts.values()].map((w) => w.date);
   const reason = plan.reason && { kind: plan.reason.kind, after: exercises.get(plan.reason.after)!, lead: exercises.get(plan.reason.lead)! };
   const otherVariants = plan.otherLeads.map((id) => exercises.get(id)!);
   const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types as MuscleGroup[] };
-  return { groups, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes as MuscleGroup[], reason, otherVariants };
+  return { groups, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes as MuscleGroup[], reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added };
 }
 
 // ---------- Saving ----------

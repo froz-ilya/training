@@ -348,9 +348,9 @@ describe('next workout', () => {
     expect(planNextType([], exercises)).toBeNull();
   });
 
-  it('groups workouts by the muscle group they trained most', () => {
+  it('names each group with at least a third of a workout', () => {
     const list = [workout('2026-01-01', ['b1', 'b2', 'c1']), workout('2026-01-02', ['a1', 'a2', 'a4']), workout('2026-01-03', ['gone'])];
-    expect(rotationKeys(list, exercises)).toEqual(['back', 'chest', '']);
+    expect(rotationKeys(list, exercises)).toEqual(['back', 'legs', 'chest', '']);
   });
 
   it('counts work sets, not exercises', () => {

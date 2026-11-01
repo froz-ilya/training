@@ -7,6 +7,8 @@ const base = '/training/';
 
 export default defineConfig({
   base,
+  // Which build a phone is running, shown in Settings. GitHub Actions sets the variable.
+  define: { __BUILD__: JSON.stringify(process.env.GITHUB_SHA?.slice(0, 7) || 'dev') },
   plugins: [
     svelte(),
     VitePWA({

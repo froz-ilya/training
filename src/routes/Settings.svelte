@@ -319,7 +319,7 @@
     {#if iosInstallHint}
       <p class="hint small muted">{t('settings.app.iosHint')}</p>
     {/if}
-    <p class="hint small muted">{t('settings.app.version', { version })}</p>
+    <p class="hint small muted">{t('settings.app.version', { version: `${version} · ${__BUILD__}` })}</p>
   </section>
 </div>
 

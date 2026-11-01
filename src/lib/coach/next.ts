@@ -1,7 +1,8 @@
-import { groupOf, leadingGroup } from '../catalog/groups';
+import { groupOf, leadingGroup, type MuscleGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
 import type { Exercise, Muscle } from '../types';
 import { fitWeek, muscleBudgets, workedExercises } from './budget';
+import { HELPER_WEIGHT } from './fatigue';
 import { expectedGapDays } from './frequency';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -59,15 +60,56 @@ const ANCHORS = 3;
 const SAME_SHARE = 2 / 3;
 const MAX_OTHER_VARIANTS = 4;
 
-/** A key per workout: the group it trained most, or '' with no known exercises. */
-export function rotationKeys(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[] {
-  return workouts.map((workout) => {
-    const work = workout.exerciseIds.flatMap((id) => {
-      const muscle = exercises.get(id)?.muscle;
-      return muscle ? [{ muscle, sets: workout.workSets[id] ?? 0 }] : [];
-    });
-    return leadingGroup(work) ?? '';
+/** The groups a rotation type can be. Shoulders, arms and core round a day off rather than define it. */
+const ROTATION_GROUPS: readonly MuscleGroup[] = ['chest', 'back', 'legs'];
+/** The share of a day's chest, back and legs work that makes it count as that group's workout. */
+const TYPE_SHARE = 1 / 3;
+
+/**
+ * The types a workout counts as, in the order they first appear in it. Short of time, people combine
+ * two workouts rather than skip one, so a combined day is both of them and not a third type. Helpers
+ * count, so a deadlift also trains legs. With none of chest, back and legs: the group it trained most.
+ */
+function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise>): MuscleGroup[] {
+  const done = workout.exerciseIds.flatMap((id) => {
+    const exercise = exercises.get(id);
+    return exercise ? [{ exercise, sets: Math.max(1, workout.workSets[id] ?? 0) }] : [];
   });
+  const totals = new Map<MuscleGroup, number>();
+  const add = (muscle: Muscle, sets: number) => {
+    const group = groupOf(muscle);
+    if (ROTATION_GROUPS.includes(group)) totals.set(group, (totals.get(group) ?? 0) + sets);
+  };
+  for (const { exercise, sets } of done) {
+    add(exercise.muscle, sets);
+    for (const helper of exercise.helpers ?? []) add(helper, sets * HELPER_WEIGHT);
+  }
+  const all = [...totals.values()].reduce((sum, sets) => sum + sets, 0);
+  // Help alone doesn't make a type: dips on an arms day aren't a chest day.
+  if (done.some(({ exercise }) => ROTATION_GROUPS.includes(groupOf(exercise.muscle)))) {
+    return [...totals].filter(([, sets]) => sets / all >= TYPE_SHARE).map(([group]) => group);
+  }
+  const leading = leadingGroup(done.map(({ exercise, sets }) => ({ muscle: exercise.muscle, sets })));
+  return leading ? [leading] : [];
+}
+
+/** The history as the rotation reads it: a combined day is its types in turn, each with that day's date. */
+function rotationOrder(workouts: RotationWorkout[], exercises: Map<string, Exercise>): { keys: string[]; dates: string[] } {
+  const keys: string[] = [];
+  const dates: string[] = [];
+  for (const workout of workouts) {
+    const groups = workoutGroups(workout, exercises);
+    for (const key of groups.length ? groups : ['']) {
+      keys.push(key);
+      dates.push(workout.date);
+    }
+  }
+  return { keys, dates };
+}
+
+/** The rotation's keys: one per type a workout counts as, or '' with no known exercises. */
+export function rotationKeys(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[] {
+  return rotationOrder(workouts, exercises).keys;
 }
 
 /** Keys seen more than once. */
@@ -177,12 +219,37 @@ function leadOf(workout: RotationWorkout, key: string, exercises: Map<string, Ex
   return main.find((id) => groupOf(exercises.get(id)!.muscle) === key) ?? main[0];
 }
 
+/** A workout as a plan for `key` reads it. */
+interface TypeWorkout extends RotationWorkout {
+  /** It counted for another type too. */
+  combined: boolean;
+}
+
+/**
+ * A type's recent workouts. A combined day gives only this type's part: the other type's exercises
+ * go and fillers stay. If nothing of this type's own is there, as when legs came only from a
+ * deadlift, the whole day stands, because that's what trained it.
+ */
+function workoutsOfType(workouts: RotationWorkout[], groups: MuscleGroup[][], key: string, exercises: Map<string, Exercise>): TypeWorkout[] {
+  return workouts.flatMap((workout, i) => {
+    if (!groups[i].includes(key as MuscleGroup)) return [];
+    const others = groups[i].filter((group) => group !== key);
+    const muscleGroup = (id: string) => {
+      const muscle = exercises.get(id)?.muscle;
+      return muscle && groupOf(muscle);
+    };
+    const hasOwn = workout.exerciseIds.some((id) => muscleGroup(id) === key);
+    const exerciseIds = hasOwn ? workout.exerciseIds.filter((id) => !others.some((group) => group === muscleGroup(id))) : workout.exerciseIds;
+    return [{ ...workout, exerciseIds, combined: others.length > 0 }];
+  });
+}
+
 /** What the user does in this type, or after the main lifts in another: longest ago first. */
-function borrowableExercises(workouts: RotationWorkout[], keys: string[], key: string, exercises: Map<string, Exercise>): string[] {
+function borrowableExercises(workouts: RotationWorkout[], groups: MuscleGroup[][], key: string, exercises: Map<string, Exercise>): string[] {
   const lastUsed = new Map<string, string>();
   workouts.forEach((workout, i) => {
     workedExercises(workout, exercises).forEach((id, at) => {
-      if (keys[i] === key || at >= ANCHORS) lastUsed.set(id, workout.date);
+      if (groups[i].includes(key as MuscleGroup) || at >= ANCHORS) lastUsed.set(id, workout.date);
     });
   });
   return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
@@ -240,12 +307,13 @@ function variantReason(workouts: RotationWorkout[], leads: string[], lead: strin
 export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace, pick: NextPick = {}): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
-  const keys = rotationKeys(usable, exercises);
-  const suggestedKey = pace ? overdueKey(keys, usable.map((w) => w.date), pace) : nextKey(keys);
+  const { keys, dates } = rotationOrder(usable, exercises);
+  const suggestedKey = pace ? overdueKey(keys, dates, pace) : nextKey(keys);
   if (suggestedKey === null) return null;
   const key = pick.type && keys.includes(pick.type) ? pick.type : suggestedKey;
 
-  const ofType = usable.filter((_, i) => keys[i] === key).slice(-TYPE_LOOKBACK);
+  const groups = usable.map((workout) => workoutGroups(workout, exercises));
+  const ofType = workoutsOfType(usable, groups, key, exercises).slice(-TYPE_LOOKBACK);
   const leads = variantLeads(ofType, key, exercises);
   const suggested = nextVariant(leads) ?? leads[leads.length - 1];
   const variant = pick.lead && leads.includes(pick.lead) ? pick.lead : suggested;
@@ -253,7 +321,9 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
   const scope = ofType.filter((_, i) => leads[i] === variant);
   // A small change can swap the lead for a day, so the plan comes from a workout with the real one.
   const own = scope.filter((w) => leadOf(w, key, exercises) === variant);
-  const latest = own[own.length - 1];
+  // A combined day was cut short, so a full workout of the type makes the better base.
+  const full = own.filter((w) => !w.combined);
+  const latest = full.length ? full[full.length - 1] : own[own.length - 1];
   const known = latest.exerciseIds.filter((id) => exercises.has(id));
   const sizes = scope.map((w) => w.exerciseIds.length).sort((a, b) => a - b);
   const size = Math.min(MAX_EXERCISES, Math.max(MIN_EXERCISES, sizes[Math.floor(sizes.length / 2)]));
@@ -286,7 +356,7 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
       size,
       min: MIN_EXERCISES,
       pool,
-      borrowable: borrowableExercises(usable, keys, key, exercises),
+      borrowable: borrowableExercises(usable, groups, key, exercises),
     },
     pace ? muscleBudgets(workouts, exercises, pace.today) : new Map(),
     exercises,

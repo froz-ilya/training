@@ -12,7 +12,7 @@
   import type { NextPick } from '../../lib/coach/next';
   import { nameOf } from '../../lib/exercises.svelte';
   import { t, tn } from '../../lib/i18n.svelte';
-  import { workoutTitle } from '../../lib/workout/title';
+  import { typeTitle } from '../../lib/workout/title';
   import { fmtPlanned } from '../workout/display';
 
   /**
@@ -70,14 +70,14 @@
   <section class="next">
     <div class="head">
       <span class="muted small">{t('coach.next.title')}</span>
-      {#if plan.groups.length}<h2>{workoutTitle(plan.groups)}</h2>{/if}
+      {#if plan.groups.length}<h2>{typeTitle(plan.groups, plan.partners)}</h2>{/if}
       <span class="muted small week">
         {plan.week.done < plan.week.total ? t('coach.week.progress', { done: plan.week.done, total: plan.week.total }) : tn('coach.week.count', plan.week.done)}
       </span>
       {#if plan.week.behind}<span class="muted small week">{t('coach.week.behind')}</span>{/if}
     </div>
     {#if plan.typeReason}
-      <p class="muted small reason">{t(TYPE_REASON_KEYS[plan.typeReason.kind], { types: plan.typeReason.types.map((type) => workoutTitle([type])).join(' → ') })}</p>
+      <p class="muted small reason">{t(TYPE_REASON_KEYS[plan.typeReason.kind], { types: plan.typeReason.types.map((type) => typeTitle(type.groups, type.partners)).join(' → ') })}</p>
     {/if}
     {#if plan.reason}
       <p class="muted small reason">{t(REASON_KEYS[plan.reason.kind], { last: nameOf(plan.reason.after), next: nameOf(plan.reason.lead) })}</p>
@@ -106,8 +106,8 @@
         {#if plan.otherTypes.length}
           <div class="switch" role="group" aria-label={t('coach.next.type.switch')}>
             <span class="muted small">{t('coach.next.type.switch')}</span>
-            {#each plan.otherTypes as type (type)}
-              <button class="chip" onclick={() => (picked = { type })}>{workoutTitle([type])}</button>
+            {#each plan.otherTypes as type (type.key)}
+              <button class="chip" onclick={() => (picked = { type: type.key })}>{typeTitle(type.groups, type.partners)}</button>
             {/each}
           </div>
         {/if}

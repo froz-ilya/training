@@ -1,6 +1,6 @@
-import type { GroupWork, MuscleGroup } from '../catalog/groups';
+import { groupOf, type GroupWork, type MuscleGroup } from '../catalog/groups';
 import { i18n, locale, t } from '../i18n.svelte';
-import type { Exercise, WorkoutSet } from '../types';
+import type { Exercise, Muscle, WorkoutSet } from '../types';
 
 /**
  * A workout is named after what it trained, so its title follows the interface language. Nothing
@@ -20,10 +20,21 @@ export function groupWork(sets: Pick<WorkoutSet, 'exerciseId' | 'entry' | 'kind'
   return [...work.values()];
 }
 
-/** "Chest, legs"; German nouns keep their capitals. "Workout" until there's an exercise. */
-export function workoutTitle(groups: MuscleGroup[]): string {
-  if (!groups.length) return t('workout.untitled');
-  const labels = groups.map((group) => t(`exercises.group.${group}`));
+/** A list that reads as a name; German nouns keep their capitals. */
+function nameList(labels: string[]): string {
   const rest = labels.slice(1).map((label) => (i18n.lang === 'de' ? label : label.toLocaleLowerCase(locale())));
   return [labels[0], ...rest].join(', ');
+}
+
+/** "Chest, legs". "Workout" until there's an exercise. */
+export function workoutTitle(groups: MuscleGroup[]): string {
+  if (!groups.length) return t('workout.untitled');
+  return nameList(groups.map((group) => t(`exercises.group.${group}`)));
+}
+
+/** "Back, biceps": a type with what's usually trained with it, which says more than "arms" would. */
+export function typeTitle(groups: MuscleGroup[], partners: Muscle[]): string {
+  const covered = new Set(partners.map(groupOf));
+  const labels = groups.filter((group) => !covered.has(group)).map((group) => t(`exercises.group.${group}`));
+  return nameList([...labels, ...partners.map((muscle) => t(`exercises.muscle.${muscle}`))]);
 }

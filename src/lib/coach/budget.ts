@@ -1,4 +1,4 @@
-import { groupOf } from '../catalog/groups';
+import { groupOf, type MuscleGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
 import type { Exercise, Muscle } from '../types';
 import type { RotationWorkout } from './next';
@@ -35,9 +35,15 @@ export function workedExercises(workout: RotationWorkout, exercises: Map<string,
  * Monday: abs on Sunday and again on Monday are two days running, which calendar weeks would read as
  * two separate weeks. The last 7 days stay out of the usual count, because they're what's compared
  * with it. Weeks with no workouts stay out too, so a holiday doesn't lower it. Empty with too little
- * history, and a muscle with no rhythm of its own has no entry.
+ * history, and a muscle with no rhythm of its own has no entry. `notThisWeek` keeps work out of the
+ * last 7 days, while it still counts towards the usual week.
  */
-export function muscleBudgets(workouts: RotationWorkout[], exercises: Map<string, Exercise>, today: string): Map<Muscle, MuscleBudget> {
+export function muscleBudgets(
+  workouts: RotationWorkout[],
+  exercises: Map<string, Exercise>,
+  today: string,
+  notThisWeek?: (workout: RotationWorkout, muscle: Muscle) => boolean,
+): Map<Muscle, MuscleBudget> {
   const weeks = new Map<number, Map<Muscle, number>>();
   for (const workout of workouts) {
     const daysAgo = daysBetween(workout.date, today);
@@ -47,6 +53,7 @@ export function muscleBudgets(workouts: RotationWorkout[], exercises: Map<string
     weeks.set(week, counts);
     for (const id of workedExercises(workout, exercises)) {
       const muscle = exercises.get(id)!.muscle;
+      if (week === 0 && notThisWeek?.(workout, muscle)) continue;
       counts.set(muscle, (counts.get(muscle) ?? 0) + 1);
     }
   }
@@ -67,8 +74,12 @@ export interface WeekPlan {
   exerciseIds: string[];
   /** Main lifts: never removed. */
   anchors: string[];
-  /** The type's group: its own muscles are never limited. */
-  type: string;
+  /** The type's groups: their muscles are never limited. */
+  groups: MuscleGroup[];
+  /** Muscles this type's days usually train too: not limited unless other days had their week's worth. */
+  partners: Muscle[];
+  /** Muscles another type's days usually train: they wait for that day rather than move here. */
+  elsewhere: Muscle[];
   /** The slots to aim for, and the fewest exercises to leave. */
   size: number;
   min: number;
@@ -90,11 +101,16 @@ export interface WeekFit {
  * Fits the slots after the main lifts to the week. A filler whose muscle has reached its usual count
  * goes. Free slots then take the variant's own exercises, a muscle that's due first, and last a small
  * muscle that's due from what the user does elsewhere. A muscle with no budget isn't limited, and one
- * usually done less than weekly still gets one exercise. Not under `min`.
+ * usually done less than weekly still gets one exercise. A partner counts with its day however soon
+ * that comes round, because a rotation doesn't keep to seven days. Not under `min`.
  */
 export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exercises: Map<string, Exercise>): WeekFit {
   const muscleOf = (id: string) => exercises.get(id)!.muscle;
-  const budgetOf = (muscle: Muscle) => (groupOf(muscle) === plan.type ? undefined : budgets.get(muscle));
+  const isPartner = (muscle: Muscle) => {
+    const budget = budgets.get(muscle);
+    return plan.partners.includes(muscle) && (!budget || budget.done < Math.max(1, budget.usual));
+  };
+  const budgetOf = (muscle: Muscle) => (plan.groups.includes(groupOf(muscle)) || isPartner(muscle) ? undefined : budgets.get(muscle));
   const planned = new Map<Muscle, number>();
   const count = (muscle: Muscle) => (budgets.get(muscle)?.done ?? 0) + (planned.get(muscle) ?? 0);
   const reached = (muscle: Muscle) => {
@@ -132,7 +148,7 @@ export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exer
   };
   fill(plan.pool, due);
   fill(plan.pool, () => true);
-  fill(plan.borrowable, (muscle) => due(muscle) && SMALL.includes(muscle));
+  fill(plan.borrowable, (muscle) => due(muscle) && SMALL.includes(muscle) && !plan.elsewhere.includes(muscle));
 
   const floor = Math.min(plan.min, plan.exerciseIds.length);
   while (exerciseIds.length < floor) exerciseIds.push(leftOut.shift()!);

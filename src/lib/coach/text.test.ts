@@ -136,6 +136,19 @@ describe('status text', () => {
     expect(statusText(restarted, 2)).toContain('Too few sessions');
   });
 
+  it('says what the progress really was, in every language', () => {
+    const progressing: ExerciseStatus = { ...status, state: 'progressing' };
+    const texts = { en: /top set/, de: /stärkster Satz/, ru: /лучший подход/ } as const;
+    const back = { en: /towards your best/, de: /Bestwert/, ru: /рекорду/ } as const;
+    for (const lang of languages) {
+      setUiLang(lang);
+      expect(statusText({ ...progressing, acrossSets: true }, 3)).toMatch(texts[lang]);
+      expect(statusText({ ...progressing, buildingBack: true }, 3)).toMatch(back[lang]);
+    }
+    setUiLang('en');
+    expect(statusText(progressing, 3)).toContain('A new best');
+  });
+
   it('uses the usual text otherwise', () => {
     expect(statusText(status, 3)).toContain('You had a break');
   });

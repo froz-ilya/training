@@ -1,6 +1,6 @@
 import type { Load } from '../types';
 import { positionFactor } from './position';
-import { bodyKg, estimateSet, isMeasured, type SessionSet } from './strength';
+import { bodyKg, estimateSet, isMeasured, RAMP_SHARE, type SessionSet, type StrengthPoint } from './strength';
 
 /** Comparing today's sets with last time's, for the marks in the workout logger. */
 
@@ -79,7 +79,39 @@ function strengthChange(current: SessionSet, previous: SessionSet, deltaKg: numb
 
 const workOnly = (sets: SessionSet[]) => sets.filter((s) => s.kind === 'work');
 
-const mean = (values: number[]) => values.reduce((sum, v) => sum + v, 0) / values.length;
+const total = (values: number[]) => values.reduce((sum, v) => sum + v, 0);
+const mean = (values: number[]) => total(values) / values.length;
+
+/**
+ * One more rep spread over several sets is small on paper, but at the same weights it's real
+ * progress. Reps only: a second or two on a timer is noise, so time goes by the band. Takes sets
+ * from the same places on both sides.
+ */
+function moreRepsAtSameWeight(current: { weightKg: number; reps: number }[], previous: { weightKg: number; reps: number }[]): boolean {
+  const sameWeights = current.every((s, i) => s.weightKg === previous[i].weightKg);
+  return sameWeights && total(current.map((s) => s.reps)) > total(previous.map((s) => s.reps));
+}
+
+/**
+ * A session clearly beat an earlier one across its work sets, whatever its single best set did. This
+ * is compareExercise()'s test, for sessions: sets are held against the same places, with the same
+ * band and the same rule for reps. Only a set the earlier session has no match for needs to prove
+ * itself: it adds to the total at RAMP_SHARE of the session's best or above, so a light extra set
+ * earns nothing, while a lighter back-off set in a matched place still counts. A shorter session
+ * falls short on the total. Nor does a fallen top set count, since moving effort from the first set
+ * to the others isn't getting stronger.
+ */
+export function beatsAcrossSets(current: StrengthPoint, previous: StrengthPoint): boolean {
+  const now = current.work ?? [];
+  const before = previous.work ?? [];
+  if (!now.length || !before.length) return false;
+  if (current.value < previous.value * (1 - SAME_BAND / 100)) return false;
+  const counted = now.filter((set, i) => i < before.length || set.estimate >= RAMP_SHARE * current.value);
+  const ratio = total(counted.map((s) => s.estimate)) / total(before.map((s) => s.estimate));
+  if (ratio > 1 + SAME_BAND / 100) return true;
+  // Above 1 so that reps gained by moving earlier in the workout, which position cost removes, don't count.
+  return ratio > 1 && now.length >= before.length && moreRepsAtSameWeight(now.slice(0, before.length), before);
+}
 
 export function compareExercise(
   current: SessionSet[],
@@ -98,13 +130,8 @@ export function compareExercise(
   const percent = round((mean(matched.map(estimate)) / mean(before.map(estimate)) - 1) * 100, 1);
   const expectedPercent = previousPosition === null ? 0 : round((positionFactor(position, previousPosition, cost) - 1) * 100, 1);
 
-  // One more rep spread over several sets is small on paper, but it's real progress.
-  const sameWeights = matched.every((s, i) => s.weightKg === before[i].weightKg);
-  const volume = (sets: SessionSet[]) => sets.reduce((sum, s) => sum + s.reps + (s.seconds ?? 0), 0);
-  const moreAtSameWeight = sameWeights && volume(matched) > volume(before);
-
   let trend: ExerciseComparison['trend'] = 'same';
-  if (percent > SAME_BAND || moreAtSameWeight) trend = 'up';
+  if (percent > SAME_BAND || moreRepsAtSameWeight(matched, before)) trend = 'up';
   else if (percent < -SAME_BAND) {
     trend = offDay || (expectedPercent < 0 && percent >= expectedPercent - SAME_BAND) ? 'expected' : 'down';
   }

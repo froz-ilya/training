@@ -7,6 +7,7 @@ import {
   createWorkout,
   deleteNote,
   deleteWorkout,
+  effectiveHistory,
   finishedWorkouts,
   finishWorkout,
   isStorageFull,
@@ -27,8 +28,12 @@ import {
   applyPlan,
   createFromPlan,
 } from './repo';
-import { db } from './schema';
+import { db, newId } from './schema';
+import { exportBackup } from './backup';
+import { loadExerciseView, loadProgress } from '../coach/data';
+import { sessionCells } from '../coach/overview';
 import { groupEntries, nextOpenSet } from '../workout/entries';
+import type { CustomExercise, SetKind, Workout } from '../types';
 import { fmtDuration, fmtSet, summarizeSets } from '../workout/format';
 import { stepValue } from '../workout/steps';
 
@@ -547,6 +552,26 @@ describe('editing the next workout', () => {
     expect(await setsOf(id)).toHaveLength(2);
   });
 
+  it('gives a switched plan its own workout, and goes back to the first', async () => {
+    const first = await planForEditing(draft('deadlift', 'dips'));
+    const switched = await planForEditing(draft('bench-press', 'push-up'));
+    expect(switched).not.toBe(first);
+    expect((await setsOf(switched)).map((s) => s.exerciseId).sort()).toEqual(['bench-press', 'push-up']);
+    expect(await planForEditing(draft('deadlift', 'dips'))).toBe(first);
+    expect(await planForEditing(draft('bench-press', 'push-up'))).toBe(switched);
+    expect(await db.workouts.count()).toBe(2);
+  });
+
+  it('tells apart two plans that start the same but share little', async () => {
+    const first = await planForEditing(draft('treadmill', 'deadlift', 'dips', 'row'));
+    expect(await planForEditing(draft('treadmill', 'push-up', 'curl', 'plank'))).not.toBe(first);
+  });
+
+  it('tells apart two plans that share most exercises but start differently', async () => {
+    const first = await planForEditing(draft('squat', 'leg-press', 'curl'));
+    expect(await planForEditing(draft('deadlift', 'leg-press', 'curl'))).not.toBe(first);
+  });
+
   it('reuses an older plan for the same exercises', async () => {
     const id = await createFromPlan(draft('deadlift', 'dips'), 'planned');
     await updateWorkout(id, { date: '2031-03-01' });
@@ -581,5 +606,124 @@ describe('storage errors', () => {
     expect(isStorageFull({ name: 'ModifyError', failures: [{ name: 'DataError' }] })).toBe(false);
     expect(isStorageFull(undefined)).toBe(false);
     expect(isStorageFull('QuotaExceededError')).toBe(false);
+  });
+});
+
+describe('ramp-up sets stored as work', () => {
+  type Numbers = [weightKg: number, reps: number, failure?: boolean];
+
+  /** Rows stored as a converter would leave them. Every number here is invented. */
+  async function stored(date: string, exerciseId: string, numbers: Numbers[], status: Workout['status'] = 'done', kind: SetKind = 'work'): Promise<string> {
+    const id = await createWorkout({ date, status });
+    await db.sets.bulkAdd(
+      numbers.map(([weightKg, reps, failure], order) => {
+        const row = { id: newId(), workoutId: id, exerciseId, date, entry: 0, order, kind, weightKg, reps, done: status === 'done' };
+        return failure ? { ...row, failure } : row;
+      }),
+    );
+    return id;
+  }
+
+  const ramp: Numbers[] = [[40, 3, true], [70, 5, true], [67.5, 5], [65, 6]];
+  const shape = (sets: { kind: SetKind; weightKg: number; failure?: boolean }[]) => sets.map((s) => [s.kind, s.weightKg, !!s.failure]);
+  const inOrder = async (id: string) => (await setsOf(id)).sort((a, b) => a.order - b.order);
+
+  it('last performance reads it as a warm-up and leaves the stored row alone', async () => {
+    const id = await stored('2031-03-01', 'deadlift', ramp);
+    const before = await inOrder(id);
+    expect(shape((await lastPerformance('deadlift'))!.sets)).toEqual([
+      ['warmup', 40, false],
+      ['work', 70, true],
+      ['work', 67.5, false],
+      ['work', 65, false],
+    ]);
+    expect(await inOrder(id)).toEqual(before);
+    expect(before[0]).toMatchObject({ kind: 'work', failure: true });
+  });
+
+  it('a new card starts it as a warm-up, and real work with last time\u2019s failure mark', async () => {
+    await stored('2031-03-01', 'deadlift', ramp);
+    const id = await createWorkout({ date: '2031-03-08' });
+    await addExercise(id, 'deadlift');
+    expect(shape(await inOrder(id))).toEqual([
+      ['warmup', 40, false],
+      ['work', 70, true],
+      ['work', 67.5, false],
+      ['work', 65, false],
+    ]);
+  });
+
+  it('repeating a finished workout copies it as a warm-up', async () => {
+    const source = await stored('2031-03-01', 'deadlift', ramp);
+    const sets = shape(await inOrder(await repeatWorkout(source)));
+    expect(sets[0]).toEqual(['warmup', 40, false]);
+    expect(sets[1]).toEqual(['work', 70, true]);
+    expect((await inOrder(source))[0]).toMatchObject({ kind: 'work', failure: true });
+  });
+
+  it('never rereads a workout that isn\u2019t finished', async () => {
+    const id = await stored('2031-03-01', 'deadlift', ramp, 'active');
+    expect(await lastPerformance('deadlift')).toBeNull();
+    expect(shape(await inOrder(await repeatWorkout(id)))[0]).toEqual(['work', 40, true]);
+  });
+
+  it('keeps sets the user marked themselves as they are', async () => {
+    await stored('2031-03-01', 'deadlift', [[40, 3], [70, 5]], 'done', 'warmup');
+    expect((await lastPerformance('deadlift'))?.sets.map((s) => s.kind)).toEqual(['warmup', 'warmup']);
+  });
+
+  it('reads a custom exercise by its own load, also while adding it to a workout', async () => {
+    const custom = (id: string, load: CustomExercise['load']): CustomExercise => ({
+      id,
+      names: { en: id, de: id, ru: id },
+      muscle: 'chest',
+      equipment: 'other',
+      load,
+      compound: false,
+      createdAt: 0,
+    });
+    await db.customExercises.bulkAdd([custom('custom-weighted', 'weight'), custom('custom-timed', 'time')]);
+    await stored('2031-03-01', 'custom-weighted', ramp);
+    await stored('2031-03-01', 'custom-timed', ramp);
+    const id = await createWorkout({ date: '2031-03-08' });
+    const kinds = async (entry: number) => (await setsOf(id)).filter((s) => s.entry === entry).sort((a, b) => a.order - b.order)[0].kind;
+    expect(await kinds(await addExercise(id, 'custom-weighted'))).toBe('warmup');
+    expect(await kinds(await addExercise(id, 'custom-timed'))).toBe('work');
+  });
+
+  it('keeps the stored kind for an exercise that no longer exists', async () => {
+    const id = await stored('2031-03-01', 'custom-gone', ramp);
+    expect((await effectiveHistory(await setsOf(id))).every((s) => s.kind === 'work')).toBe(true);
+  });
+
+  it('summaries count it as a warm-up once finished, and as stored before that', async () => {
+    const mixed = async (status: Workout['status']) => {
+      const id = await stored('2031-03-01', 'deadlift', [[30, 2], [80, 6]], status);
+      const chest = { workoutId: id, exerciseId: 'barbell-bench-press', date: '2031-03-01', entry: 1, kind: 'work' as const, weightKg: 50, reps: 5, done: status === 'done' };
+      await db.sets.bulkAdd([0, 1, 2, 3, 4].map((order) => ({ ...chest, id: newId(), order })));
+      return id;
+    };
+    const finished = await mixed('done');
+    const planned = await mixed('planned');
+    const summaries = await summarize([finished, planned]);
+    expect(summaries.get(finished)).toMatchObject({ exercises: 2, sets: 7, groups: ['chest'] });
+    expect(summaries.get(planned)).toMatchObject({ exercises: 2, sets: 7, groups: ['chest', 'back'] });
+  });
+
+  it('sessions, progress and tables all see the same sets, and backups the raw rows', async () => {
+    await stored('2031-03-01', 'deadlift', ramp);
+    await stored('2031-03-08', 'deadlift', [[42.5, 3, true], [72.5, 5], [70, 5], [67.5, 6]]);
+    const view = await loadExerciseView('deadlift');
+    expect(view?.sessions.map((s) => s.sets.filter((set) => set.kind === 'work').length)).toEqual([3, 3]);
+    expect(sessionCells(view!.sessions[1], view!.sessions[0], 'weight').map((c) => [c.set.weightKg, c.better])).toEqual([
+      [72.5, 'weight'],
+      [70, 'weight'],
+      [67.5, 'weight'],
+    ]);
+    const progress = await loadProgress();
+    expect(progress.views[0].sessions).toEqual(view?.sessions);
+    expect((await db.sets.toArray()).every((s) => s.kind === 'work')).toBe(true);
+    const backup = JSON.parse(await (await exportBackup()).text());
+    expect(JSON.stringify(backup)).not.toContain('"warmup"');
   });
 });

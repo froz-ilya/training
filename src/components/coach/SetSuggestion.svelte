@@ -29,6 +29,8 @@
     return () => sub.unsubscribe();
   });
 
+  /** Beside the logger the reason stays short; on its own there's room to read it. */
+  const open = $derived(expanded || !onapply);
   const suggestion = $derived(view?.suggestion ?? null);
   const load = $derived(view?.exercise.load ?? 'weight');
   /** The level sits on the sets, not on the suggestion. */
@@ -43,7 +45,7 @@
         <button class="apply" onclick={() => suggestion && onapply?.(suggestion)}>{t('coach.suggest.apply')}</button>
       {/if}
     </div>
-    <button class="reason muted small" class:expanded aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
+    <button class="reason muted small" class:expanded={open} aria-expanded={open} onclick={() => (expanded = !expanded)}>
       {reasonText(suggestion)}
     </button>
   </div>

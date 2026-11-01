@@ -38,6 +38,8 @@ function dayInText(date: string): string {
 
 /** What the status means for this exercise, and why a restarted comparison has so little to say. */
 export function statusText(status: ExerciseStatus, sessionsSince: number): string {
+  if (status.acrossSets) return t('coach.state.progressing.sets');
+  if (status.buildingBack) return t('coach.state.progressing.back');
   if (!status.restartedOn) return stateText(status.state);
   const date = dayInText(status.restartedOn);
   return t(sessionsSince ? 'coach.restart.early' : 'coach.restart.waiting', { date });

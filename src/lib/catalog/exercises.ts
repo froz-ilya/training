@@ -404,7 +404,7 @@ export const CATALOG: Exercise[] = [
     aliases: ['скручивания блок', 'пресс блок'],
   }),
   ex('ab-machine', 'abs', 'machine', ['Ab machine', 'Bauchmaschine', 'Скручивания в тренажёре'], {
-    aliases: ['хаммер пресс', 'пресс в тренажере', 'скручивания хаммер', 'пресс скручивания'],
+    aliases: ['хаммер пресс', 'пресс в тренажере', 'скручивания хаммер'],
   }),
   ex('oblique-machine', 'abs', 'machine', ['Oblique machine', 'Seitliche Bauchmaschine', 'Косые мышцы в тренажёре'], {
     aliases: ['хаммер пресс косые'],

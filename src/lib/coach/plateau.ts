@@ -1,6 +1,7 @@
 import { daysBetween } from '../dates';
 import type { Exercise, StallAction, StallRecord } from '../types';
-import { IMPROVEMENT, type ExerciseStatus } from './status';
+import { beatsAcrossSets } from './compare';
+import { bestWork, IMPROVEMENT, tiesBest, type ExerciseStatus } from './status';
 import type { RepRange, StrengthPoint } from './strength';
 
 /** No new best after this many sessions or weeks: the choice didn't help. */
@@ -14,15 +15,17 @@ const ROTATION_LIMIT = 1.25;
 export const LIGHTER_WEEK_DAYS = 7;
 
 /**
- * The outcome of a recorded choice: true once a later session beats the best before it, false
- * after long enough without one, undefined while it's still too early to say.
+ * The outcome of a recorded choice: true once a later session makes progress on the sessions before
+ * it, by a new best or a clear gain across its sets. False after long enough without one, undefined
+ * while it's still too early to say.
  */
 export function stallOutcome(record: StallRecord, points: StrengthPoint[], today: string): boolean | undefined {
   const before = points.filter((p) => p.date <= record.date);
   const after = points.filter((p) => p.date > record.date);
   if (!before.length) return undefined;
   const best = Math.max(...before.map((p) => p.value));
-  if (after.some((p) => p.value > best * IMPROVEMENT)) return true;
+  const work = bestWork(before);
+  if (after.some((p) => p.value > best * IMPROVEMENT || (work && tiesBest(p, best) && beatsAcrossSets(p, work)))) return true;
   if (after.length >= OUTCOME_SESSIONS || daysBetween(record.date, today) / 7 >= OUTCOME_WEEKS) return false;
   return undefined;
 }

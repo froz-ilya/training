@@ -19,6 +19,7 @@
     addSet,
     applyPlan,
     deleteWorkout,
+    effectiveHistory,
     finishWorkout,
     isStorageFull,
     lastPerformance,
@@ -52,7 +53,8 @@
   const data = live(async () => {
     const workout = await db.workouts.get(id);
     if (!workout) return null;
-    const entries = groupEntries(await db.sets.where('workoutId').equals(id).toArray());
+    const rows = await db.sets.where('workoutId').equals(id).toArray();
+    const entries = groupEntries(workout.status === 'done' ? await effectiveHistory(rows) : rows);
     const notes = await db.exerciseNotes.where('workoutId').equals(id).toArray();
     const details = await Promise.all(
       entries.map(async (entry) => ({

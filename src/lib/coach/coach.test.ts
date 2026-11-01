@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { Exercise, StallRecord } from '../types';
 import { nextKey, overdueKey, planNextType, rotationKeys, rotationTypeCount, type RotationWorkout } from './next';
 import { alternateRange, atRotationLimit, plateauOptions, resolveOutcomes, stallOutcome } from './plateau';
-import { compareExercise, compareSet, pairSets } from './compare';
+import { beatsAcrossSets, compareExercise, compareSet, pairSets } from './compare';
 import { expectedGapDays, weekProgress, weeklyFrequency } from './frequency';
 import { adjustPoints, DEFAULT_POSITION_COST, entryRanks, learnPositionCost, positionFactor } from './position';
-import { countedPoints, exerciseStatus, findFall } from './status';
-import { atLatestLevel, countedSessions, estimateSet, leadSet, learnStep, markHeldBack, repRange, restartDate, sessionStrength, sinceBaseline, strengthPoints, topSet, weightStep, type Session, type SessionSet, type StrengthPoint } from './strength';
+import { countedPoints, exerciseStatus, findFall, isRising } from './status';
+import { atLatestLevel, countedSessions, doneWork, effectiveRows, effectiveSets, estimateSet, leadSet, learnStep, markHeldBack, repRange, restartDate, sessionStrength, sinceBaseline, strengthPoints, topSet, weightStep, type Session, type SessionSet, type StrengthPoint } from './strength';
 import { suggestSets, usualWorkSets } from './suggest';
 import { calendarWeeks, exerciseRecords, newBests, weeklyVolume, weekStart } from './summary';
 import { hasPain, isOffDay } from '../notes/tags';
@@ -1449,5 +1449,437 @@ describe('the rep cap on bodyweight exercises', () => {
 
   it.each([16, 20, 30, 40])('scores added weight above none at %i reps', (reps) => {
     expect(estimateSet(set(5, reps), 'body', 75)).toBeGreaterThan(estimateSet(set(0, reps), 'body', 75));
+  });
+});
+
+describe('ramp-up sets stored as work', () => {
+  const body = 80;
+  const set = (weightKg: number, reps: number, extra: Partial<SessionSet> = {}): SessionSet => ({ kind: 'work', weightKg, reps, ...extra });
+  const warm = (weightKg: number, reps: number): SessionSet => ({ kind: 'warmup', weightKg, reps });
+  const kinds = (sets: SessionSet[], load: Exercise['load'] = 'weight') => effectiveSets(sets, load, body).map((s) => s.kind);
+  const ramped = (date = '2031-02-01'): Session => ({
+    workoutId: date,
+    date,
+    position: 1,
+    sets: effectiveSets([set(40, 3), set(70, 5), set(67.5, 5), set(65, 6)], 'weight', body),
+  });
+
+  it('pairs today’s first work set with last time’s first real one', () => {
+    const today = [set(70, 6), set(67.5, 6), set(65, 7)];
+    const pairs = pairSets(today, ramped().sets);
+    expect(pairs.map((s) => [s?.weightKg, s?.reps])).toEqual([
+      [70, 5],
+      [67.5, 5],
+      [65, 6],
+    ]);
+    expect(compareSet(today[0], pairs[0])).toMatchObject({ deltaKg: 0, deltaReps: 1, trend: 'up' });
+  });
+
+  it('compares the exercise without the ramp-up set', () => {
+    const today = [set(70, 5), set(67.5, 5), set(65, 6)];
+    const result = compareExercise(today, ramped().sets, { position: 1, previousPosition: 1, cost: 0, load: 'weight', bodyKg: body });
+    expect(result).toMatchObject({ percent: 0, trend: 'same' });
+  });
+
+  it('leaves it out of the work sets and the number of planned sets', () => {
+    const history = [ramped('2031-02-01'), ramped('2031-02-08'), ramped('2031-02-15')];
+    expect(doneWork(history[0]).map((s) => s.weightKg)).toEqual([70, 67.5, 65]);
+    expect(usualWorkSets(history)).toBe(3);
+    const plan = suggestSets(press, history, { today: '2031-02-22' });
+    expect(plan?.sets.filter((s) => s.kind === 'work')).toHaveLength(3);
+    expect(plan?.sets[0]).toMatchObject({ kind: 'warmup', weightKg: 40, reps: 3 });
+  });
+
+  it('keeps an ascending pyramid as work', () => {
+    expect(kinds([set(55, 10), set(65, 8), set(75, 6)])).toEqual(['work', 'work', 'work']);
+  });
+
+  it('keeps a long pyramid whose first set is far below the best: reps fell at every step', () => {
+    const sets = [set(60, 12), set(70, 10), set(80, 8), set(90, 6)];
+    expect(estimateSet(sets[0], 'weight', body)).toBeLessThan(0.8 * estimateSet(sets[3], 'weight', body));
+    expect(kinds(sets)).toEqual(['work', 'work', 'work', 'work']);
+  });
+
+  it('keeps a light high-rep set when nothing proves it was easy', () => {
+    expect(kinds([set(30, 12), set(60, 6), set(60, 5)])).toEqual(['work', 'work', 'work']);
+  });
+
+  it('keeps straight sets before a heavier single', () => {
+    expect(kinds([set(60, 6), set(60, 6), set(80, 1)])).toEqual(['work', 'work', 'work']);
+  });
+
+  it('keeps a slightly lighter set before the top weight', () => {
+    expect(kinds([set(65, 6), set(70, 6), set(70, 5)])).toEqual(['work', 'work', 'work']);
+  });
+
+  it('reads every step of a longer ramp, and keeps the set that only came close', () => {
+    expect(kinds([set(30, 4), set(45, 4), set(65, 4), set(70, 5), set(70, 5)])).toEqual(['warmup', 'warmup', 'work', 'work', 'work']);
+  });
+
+  it('ignores a failure mark that later sets disprove, and drops it', () => {
+    const [ramp, top] = effectiveSets([set(40, 3, { failure: true }), set(70, 5, { failure: true })], 'weight', body);
+    expect(ramp).toMatchObject({ kind: 'warmup', weightKg: 40, reps: 3 });
+    expect(ramp.failure).toBeUndefined();
+    expect(top).toMatchObject({ kind: 'work', failure: true });
+  });
+
+  it('doesn’t let a ramp-up set’s failure mark count, or reach the plan', () => {
+    const at = (date: string, ...sets: SessionSet[]): Session => ({ workoutId: date, date, position: 1, sets: effectiveSets(sets, 'weight', body) });
+    const history = dates('2031-02-01', 5, 7).map((date) => at(date, set(40, 3, { failure: true }), set(70, 5), set(70, 5)));
+    expect(markHeldBack(history).some((s) => s.offDay)).toBe(false);
+    const plan = suggestSets(press, history, { today: '2031-03-08' });
+    expect(plan?.sets.some((s) => s.failure)).toBe(false);
+  });
+
+  it('keeps a real failure mark for the set that carries it into the plan', () => {
+    const last = { ...ramped(), sets: effectiveSets([set(40, 3), set(70, 5, { failure: true }), set(65, 6, { failure: true })], 'weight', body) };
+    const plan = suggestSets(press, [last], { today: '2031-02-05' });
+    expect(plan?.sets.filter((s) => s.kind === 'work').every((s) => s.failure)).toBe(true);
+    expect(plan?.sets.filter((s) => s.kind === 'warmup').some((s) => s.failure)).toBe(false);
+  });
+
+  it('never touches back-off or descending sets', () => {
+    expect(kinds([set(70, 5), set(70, 4), set(40, 12), set(30, 15)])).toEqual(['work', 'work', 'work', 'work']);
+    expect(kinds([set(80, 4), set(60, 8), set(40, 12)])).toEqual(['work', 'work', 'work']);
+  });
+
+  it('keeps sets after the ramp-up and the first top set as they are', () => {
+    expect(kinds([set(40, 5), set(70, 5), set(45, 12)])).toEqual(['warmup', 'work', 'work']);
+  });
+
+  it('reads added weight on a bodyweight exercise with the body counted', () => {
+    expect(kinds([set(0, 3), set(15, 6), set(15, 5)], 'body')).toEqual(['warmup', 'work', 'work']);
+    // Bodyweight alone is most of the load here, so the first set is real work.
+    expect(kinds([set(0, 6), set(5, 6), set(5, 6)], 'body')).toEqual(['work', 'work', 'work']);
+    expect(kinds([set(0, 12), set(10, 10), set(20, 8)], 'body')).toEqual(['work', 'work', 'work']);
+  });
+
+  it('keeps bodyweight sets with no added weight at all', () => {
+    expect(kinds([set(0, 12), set(0, 10), set(0, 8)], 'body')).toEqual(['work', 'work', 'work']);
+  });
+
+  it('only compares sets at one level', () => {
+    const across = [set(10, 3, { level: 2 }), set(30, 6, { level: 5 }), set(30, 5, { level: 5 })];
+    expect(kinds(across)).toEqual(['work', 'work', 'work']);
+    const within = [set(10, 3, { level: 5 }), set(30, 6, { level: 5 }), set(30, 5, { level: 5 })];
+    expect(kinds(within)).toEqual(['warmup', 'work', 'work']);
+    expect(effectiveSets(within, 'weight', body)[0].level).toBe(5);
+    expect(kinds([set(0, 3, { level: 2 }), set(0, 8, { level: 5 })], 'body')).toEqual(['work', 'work']);
+  });
+
+  it('changes only the ramp-up set when it’s the one lighter set', () => {
+    const sets = [warm(20, 8), set(35, 4), set(70, 6), set(70, 6), set(70, 5)];
+    const read = effectiveSets(sets, 'weight', body);
+    expect(read.map((s) => s.kind)).toEqual(['warmup', 'warmup', 'work', 'work', 'work']);
+    expect(read.map((s) => s.weightKg)).toEqual([20, 35, 70, 70, 70]);
+    expect(read[2]).toBe(sets[2]);
+  });
+
+  it('leaves a session of one set alone', () => {
+    const sets = [set(70, 5, { failure: true })];
+    expect(effectiveSets(sets, 'weight', body)).toBe(sets);
+  });
+
+  it('leaves timed sets alone, weight or no weight', () => {
+    const sets = [set(0, 0, { seconds: 20 }), set(10, 0, { seconds: 40 }), set(20, 0, { seconds: 60 })];
+    expect(effectiveSets(sets, 'time', body)).toBe(sets);
+  });
+
+  it('keeps a set with no result, and ignores a missed attempt as the top weight', () => {
+    expect(kinds([set(40, 0), set(70, 5)])).toEqual(['work', 'work']);
+    expect(kinds([set(40, 3), set(70, 5), set(90, 0)])).toEqual(['warmup', 'work', 'work']);
+  });
+
+  it('never changes the sets it was given', () => {
+    const sets = [set(40, 3, { failure: true }), set(70, 5)];
+    effectiveSets(sets, 'weight', body);
+    expect(sets[0]).toEqual({ kind: 'work', weightKg: 40, reps: 3, failure: true });
+  });
+
+  describe('across rows', () => {
+    const row = (workoutId: string, exerciseId: string, entry: number, order: number, weightKg: number, reps: number) => ({
+      ...set(weightKg, reps),
+      workoutId,
+      exerciseId,
+      entry,
+      order,
+    });
+    const read = (rows: ReturnType<typeof row>[], loadOf: (id: string) => Exercise['load'] | undefined = () => 'weight') =>
+      effectiveRows(rows, loadOf, body);
+
+    it('reads each session by itself and keeps the order given', () => {
+      const rows = [row('a', 'press', 0, 1, 70, 5), row('b', 'press', 0, 0, 40, 3), row('a', 'press', 0, 0, 40, 3), row('c', 'row', 1, 0, 40, 3)];
+      expect(read(rows).map((s) => s.kind)).toEqual(['work', 'work', 'warmup', 'work']);
+      expect(read(rows).map((s) => s.workoutId)).toEqual(['a', 'b', 'a', 'c']);
+    });
+
+    it('reads an exercise done twice in a workout as one session', () => {
+      const rows = [row('a', 'press', 3, 0, 70, 5), row('a', 'press', 1, 0, 40, 3)];
+      expect(read(rows).map((s) => s.kind)).toEqual(['work', 'warmup']);
+    });
+
+    it('keeps the stored kind when the exercise is gone', () => {
+      const rows = [row('a', 'gone', 0, 0, 40, 3), row('a', 'gone', 0, 1, 70, 5)];
+      expect(read(rows, () => undefined).map((s) => s.kind)).toEqual(['work', 'work']);
+    });
+  });
+});
+
+describe('progress across a session\u2019s sets', () => {
+  const steady = (date: string) => session(date, [50, 9], [50, 8], [47.5, 8]);
+  /** Seven alike sessions, a stall by any measure, then the given session. */
+  const stalledThen = (next?: (date: string) => Session): Session[] => {
+    const history = dates('2031-01-06', 7, 7).map(steady);
+    return next ? [...history, next('2031-02-24')] : history;
+  };
+  const today = '2031-02-26';
+  const statusOf = (history: Session[], load: Exercise['load'] = 'weight') => exerciseStatus(strengthPoints(history, load, 75), { today });
+
+  it('starts from a real stall', () => {
+    expect(statusOf(stalledThen()).state).toBe('stalled');
+    expect(statusOf(stalledThen(steady)).state).toBe('stalled');
+  });
+
+  it('reads more on the later sets as progress when the top set only ties', () => {
+    const history = stalledThen((date) => session(date, [50, 9], [50, 9], [50, 8]));
+    const status = statusOf(history);
+    expect(status).toMatchObject({ state: 'progressing', acrossSets: true, sessionsSinceBest: 0, weeksSinceBest: 0 });
+    expect(status.bestDate).toBe('2031-01-06');
+    const compared = compareExercise(history[7].sets, history[6].sets, { position: 1, previousPosition: 1, cost: 0, load: 'weight', bodyKg: 75 });
+    expect(compared?.trend).toBe('up');
+  });
+
+  it('agrees in the suggestion, with no raise on a tied top set', () => {
+    const history = stalledThen((date) => session(date, [50, 9], [50, 9], [50, 8]));
+    const s = suggestSets(press, history, { today, status: statusOf(history) })!;
+    expect(s.reason).toBe('moreReps');
+    expect(s.weightKg).toBe(50);
+    expect(s.reps).toBe(10);
+    const stuck = stalledThen(steady);
+    expect(suggestSets(press, stuck, { today, status: statusOf(stuck) })!.reason).toBe('noIncrease');
+  });
+
+  it('claims no record', () => {
+    const history = stalledThen((date) => session(date, [50, 9], [50, 9], [50, 8]));
+    expect(newBests(history, 'weight', 75)).toEqual([]);
+    expect(exerciseRecords(history, 'weight', 75).bestEstimateDate).toBe('2031-01-06');
+  });
+
+  it('reads heavier back-off sets as progress', () => {
+    const before = (date: string) => session(date, [100, 8], [80, 10], [80, 10]);
+    const history = [...dates('2031-01-06', 7, 7).map(before), session('2031-02-24', [100, 8], [85, 10], [85, 10])];
+    expect(statusOf(history).state).toBe('progressing');
+  });
+
+  it('gives a light extra set nothing', () => {
+    expect(statusOf(stalledThen((date) => session(date, [50, 9], [50, 8], [47.5, 8], [20, 10]))).state).toBe('stalled');
+    expect(statusOf(stalledThen((date) => session(date, [50, 9], [50, 8], [47.5, 8], [50, 3]))).state).toBe('stalled');
+  });
+
+  it('counts a real added set, once', () => {
+    const more = (date: string) => session(date, [50, 9], [50, 8], [47.5, 8], [50, 7]);
+    expect(statusOf(stalledThen(more)).state).toBe('progressing');
+    const repeated = [...stalledThen(more), ...dates('2031-03-03', 6, 7).map(more)];
+    expect(exerciseStatus(strengthPoints(repeated, 'weight', 75), { today: '2031-04-09' }).state).toBe('stalled');
+  });
+
+  it('keeps noise inside the band', () => {
+    expect(statusOf(stalledThen((date) => session(date, [50, 9], [50, 8], [48, 8]))).state).toBe('stalled');
+    expect(statusOf(stalledThen((date) => session(date, [50, 8], [50, 9], [47.5, 8]))).state).toBe('stalled');
+  });
+
+  it('treats one more rep at the same weights as the workout card does', () => {
+    const history = stalledThen((date) => session(date, [50, 9], [50, 8], [47.5, 9]));
+    expect(statusOf(history).state).toBe('progressing');
+    const compared = compareExercise(history[7].sets, history[6].sets, { position: 1, previousPosition: 1, cost: 0, load: 'weight', bodyKg: 75 });
+    expect(compared?.percent).toBeLessThan(1);
+    expect(compared?.trend).toBe('up');
+  });
+
+  it('needs the session to beat the best work so far, not just the last one', () => {
+    const dip = (date: string) => session(date, [50, 9], [47.5, 7], [45, 7]);
+    const history = [...stalledThen(), ...dates('2031-02-24', 1, 7).map(dip), session('2031-03-03', [50, 9], [50, 8], [47.5, 8])];
+    expect(exerciseStatus(strengthPoints(history, 'weight', 75), { today: '2031-03-05' }).sessionsSinceBest).toBe(8);
+  });
+
+  it('does not count a shorter session, or a fallen top set', () => {
+    expect(statusOf(stalledThen((date) => session(date, [50, 9], [50, 9]))).state).toBe('stalled');
+    expect(statusOf(stalledThen((date) => session(date, [45, 9], [45, 9], [45, 9], [45, 9]))).state).toBe('stalled');
+  });
+
+  it('stays at the level compared', () => {
+    const at = (date: string, level: number, ...reps: number[]): Session => ({ ...session(date), sets: reps.map((n) => ({ kind: 'work', weightKg: 0, reps: n, level })) });
+    const same = dates('2031-01-06', 7, 7).map((date) => at(date, 12, 12, 10, 9));
+    const otherSet = { ...at('2031-02-24', 12, 12, 10, 9), sets: [...at('2031-02-24', 12, 12, 10, 9).sets, { kind: 'work' as const, weightKg: 0, reps: 14, level: 11 }] };
+    expect(statusOf([...same, otherSet], 'body').state).toBe('stalled');
+    expect(statusOf([...same, at('2031-02-24', 12, 12, 11, 10)], 'body').state).toBe('progressing');
+    const moved = atLatestLevel([...same, at('2031-02-24', 11, 12, 11, 10)]);
+    expect(moved).toHaveLength(1);
+  });
+
+  it('works on timed exercises, with a band for the timer', () => {
+    const timed = (date: string, ...seconds: number[]): Session => ({ ...session(date), sets: seconds.map((s) => ({ kind: 'work', weightKg: 0, reps: 0, seconds: s })) });
+    const same = dates('2031-01-06', 7, 7).map((date) => timed(date, 60, 50, 40));
+    expect(statusOf([...same, timed('2031-02-24', 60, 55, 50)], 'time').state).toBe('progressing');
+    expect(statusOf([...same, timed('2031-02-24', 60, 50, 41)], 'time').state).toBe('stalled');
+    const options = { position: 1, previousPosition: 1, cost: 0, load: 'time' as const, bodyKg: 75 };
+    expect(compareExercise(timed('a', 60, 50, 41).sets, timed('b', 60, 50, 40).sets, options)?.trend).toBe('same');
+  });
+
+  it('works on bodyweight exercises', () => {
+    const same = dates('2031-01-06', 7, 7).map((date) => session(date, [0, 12], [0, 10]));
+    expect(statusOf([...same, session('2031-02-24', [0, 12], [0, 12])], 'body').state).toBe('progressing');
+  });
+
+  it('lets an off day count when it made progress, and only then', () => {
+    const offDay = (s: Session): Session => ({ ...s, offDay: true });
+    expect(statusOf(stalledThen((date) => offDay(session(date, [50, 9], [50, 9], [50, 8])))).state).toBe('progressing');
+    expect(statusOf(stalledThen((date) => offDay(session(date, [50, 9], [40, 8], [40, 8])))).state).toBe('stalled');
+  });
+
+  it('allows for a session moved earlier in the workout', () => {
+    const late = dates('2031-01-06', 7, 7).map((date) => ({ ...steady(date), position: 4 }));
+    const early = { ...session('2031-02-24', [50, 9], [50, 8], [47.5, 9]), position: 1 };
+    const points = strengthPoints([...late, early], 'weight', 75);
+    expect(exerciseStatus(points, { today }).state).toBe('progressing');
+    expect(exerciseStatus(points, { today, positionCost: 0.025 }).state).toBe('stalled');
+  });
+
+  it('never counts ramp-up sets stored as work', () => {
+    const read = (date: string, ...sets: [number, number][]): Session => {
+      const s = session(date, ...sets);
+      return { ...s, sets: effectiveSets(s.sets, 'weight', 75) };
+    };
+    const same = dates('2031-01-06', 7, 7).map((date) => read(date, [20, 8], [50, 9], [50, 8], [47.5, 8]));
+    expect(statusOf([...same, read('2031-02-24', [30, 9], [50, 9], [50, 8], [47.5, 8])]).state).toBe('stalled');
+  });
+
+  it('does not call work well below the best progress', () => {
+    const history = [
+      session('2031-01-06', [40, 8], [40, 8]),
+      session('2031-01-13', [60, 8]),
+      ...dates('2031-01-20', 3, 7).map((date) => session(date, [50, 8], [50, 8], [50, 8])),
+    ];
+    const status = exerciseStatus(strengthPoints(history, 'weight', 75), { today: '2031-02-05' });
+    expect(status.acrossSets).toBeUndefined();
+    expect(status.state).not.toBe('progressing');
+  });
+
+  it('has nothing to compare on points without sets', () => {
+    expect(beatsAcrossSets({ date: 'a', value: 100 }, { date: 'b', value: 90 })).toBe(false);
+  });
+
+  describe('and plateau choices', () => {
+    const record: StallRecord = { id: 'r', exerciseId: 'x', action: 'repRange', date: '2031-02-20' };
+
+    it('notes that a choice helped when progress followed', () => {
+      const history = stalledThen((date) => session(date, [50, 9], [50, 9], [50, 8]));
+      expect(stallOutcome(record, strengthPoints(history, 'weight', 75), today)).toBe(true);
+    });
+
+    it('stays open while nothing has changed, then says it didn\u2019t help', () => {
+      const history = stalledThen(steady);
+      const points = strengthPoints(history, 'weight', 75);
+      expect(stallOutcome(record, points, today)).toBeUndefined();
+      expect(stallOutcome(record, points, '2031-06-01')).toBe(false);
+    });
+  });
+});
+
+describe('direction of the recent sessions', () => {
+  /** A date three days after the last of these points, so no break comes into it. */
+  const statusOf = (values: number[], extra: { goal?: 'maintain' } = {}) => {
+    const p = points(values, '2031-01-06', 7);
+    const d = new Date(`${p[p.length - 1].date}T12:00:00`);
+    d.setDate(d.getDate() + 3);
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return exerciseStatus(p, { today, ...extra });
+  };
+  const rebuilding = [175, 165, 155, 150, 145, 143, 143, 147, 154];
+
+  it('reads a climb from an old peak as building back', () => {
+    const status = statusOf(rebuilding);
+    expect(status.state).toBe('progressing');
+    expect(status.buildingBack).toBe(true);
+    expect(status.best).toBe(175);
+  });
+
+  it('lets the suggestion follow', () => {
+    const p = points(rebuilding, '2031-01-06', 7);
+    const history = p.map((point) => session(point.date, [point.value / (1 + 8 / 30), 8]));
+    const status = exerciseStatus(p, { today: '2031-03-10' });
+    expect(suggestSets(press, history, { today: '2031-03-10', status })!.reason).not.toBe('noIncrease');
+  });
+
+  it('keeps a real slide dropping', () => {
+    expect(statusOf([175, 165, 160, 155, 150, 145, 140, 135, 130]).state).toBe('dropping');
+  });
+
+  it('is not flipped by one good day after a slide', () => {
+    const status = statusOf([175, 165, 160, 155, 150, 145, 140, 135, 155]);
+    expect(status.state).toBe('dropping');
+    expect(status.buildingBack).toBeUndefined();
+  });
+
+  it('is not flipped by one bad day in a climb', () => {
+    expect(statusOf([...rebuilding, 146, 156]).buildingBack).toBe(true);
+  });
+
+  it('sees a climb in three sessions, for an exercise done rarely', () => {
+    const old = points([175, 175, 175], '2030-03-04', 7);
+    const recent = points([143, 147, 154], '2031-01-06', 30);
+    const status = exerciseStatus([...old, ...recent], { today: '2031-03-10', ignoreFall: true });
+    expect(status.state).toBe('progressing');
+    expect(status.buildingBack).toBe(true);
+    expect(isRising([143, 147, 154])).toBe(true);
+  });
+
+  it('needs both later sessions clear of the first of three', () => {
+    expect(isRising([143, 143.5, 170])).toBe(false);
+    expect(isRising([143, 139, 170])).toBe(false);
+    expect(isRising([143, 154])).toBe(false);
+  });
+
+  it('reads the chart\u2019s numbers, not ones allowed for position', () => {
+    const p = [175, 165, 155, 150, 145, 143, 147, 154].map((value, i) => ({ ...points([value], '2031-01-06')[0], date: dates('2031-01-06', 8, 7)[i], position: i < 6 ? 3 : i === 6 ? 2 : 1 }));
+    const status = exerciseStatus(p, { today: '2031-03-05', positionCost: 0.03 });
+    expect(status.state).toBe('progressing');
+    expect(status.buildingBack).toBe(true);
+  });
+
+  it('keeps a session done later from reading as a fall the chart doesn\u2019t show', () => {
+    const flat = dates('2031-01-06', 8, 7).map((date, i) => ({ date, value: 100, position: i < 5 ? 1 : 3 }));
+    expect(exerciseStatus(flat, { today: '2031-03-05', positionCost: 0.03 }).state).not.toBe('dropping');
+  });
+
+  it.each([
+    ['one rep up', [175, 165, 150, 150, 150, 153, 153]],
+    ['reps going up and down', [175, 165, 150, 155, 150, 155, 150, 155]],
+    ['a bad day, then flat', [175, 165, 155, 150, 140, 150, 151, 150, 151, 152]],
+    ['a step up that stayed', [175, 165, 155, 145, 152, 152, 152, 152]],
+  ])('does not call %s building back', (_, values) => {
+    const status = statusOf(values);
+    expect(status.buildingBack).toBeUndefined();
+    expect(status.state).toBe('stalled');
+  });
+
+  it('calls flat sessions below an old peak stalled, not dropping', () => {
+    expect(statusOf([175, 165, 155, 145, 143, 143, 143, 143, 143, 143]).state).toBe('stalled');
+  });
+
+  it('keeps a slight wobble out of it', () => {
+    expect(statusOf([100, 100, 100, 100, 100, 99, 100, 101, 100, 100]).state).toBe('stalled');
+  });
+
+  it('ignores sessions from before the chart\u2019s shortest range when reading direction', () => {
+    const old = points([175, 175, 175], '2030-04-01', 7);
+    const recent = points([140, 140, 140, 140], '2031-01-06', 7);
+    expect(exerciseStatus([...old, ...recent], { today: '2031-01-30', ignoreFall: true }).state).not.toBe('dropping');
+  });
+
+  it('holds on a maintain goal, whichever way it\u2019s heading', () => {
+    expect(statusOf(rebuilding, { goal: 'maintain' })).toMatchObject({ state: 'holding' });
+    expect(statusOf(rebuilding, { goal: 'maintain' }).buildingBack).toBeUndefined();
+    expect(statusOf([175, 165, 160, 155, 150, 145, 140, 135, 130], { goal: 'maintain' }).state).toBe('holding');
   });
 });

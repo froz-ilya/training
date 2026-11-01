@@ -1,11 +1,13 @@
 import Dexie from 'dexie';
 import { db, newId } from './schema';
-import { CATALOG } from '../catalog/exercises';
+import { CATALOG, catalogExercise } from '../catalog/exercises';
 import { mainGroups, type MuscleGroup } from '../catalog/groups';
+import { bodyKg, effectiveRows } from '../coach/strength';
 import { toISODate } from '../dates';
+import { settings } from '../settings.svelte';
 import { groupEntries } from '../workout/entries';
 import { groupWork } from '../workout/title';
-import type { CustomExercise, Exercise, ExerciseNote, Workout, WorkoutSet, WorkoutStatus } from '../types';
+import type { CustomExercise, Exercise, ExerciseNote, Load, Workout, WorkoutSet, WorkoutStatus } from '../types';
 
 /**
  * Every change is written to IndexedDB as it happens, so closing the app mid-workout loses nothing.
@@ -13,6 +15,18 @@ import type { CustomExercise, Exercise, ExerciseNote, Workout, WorkoutSet, Worko
  * An exercise belongs to a workout through its sets: one `entry` number per exercise card. Once a
  * workout is done all its sets are done, so code reading history can rely on that.
  */
+
+/**
+ * Rows of finished workouts as the app reads them: see effectiveSets(). What's stored never changes,
+ * so backups and exports keep the raw rows. Inside a transaction, that needs db.customExercises.
+ */
+export async function effectiveHistory(rows: WorkoutSet[]): Promise<WorkoutSet[]> {
+  const loads = new Map<string, Load | undefined>();
+  for (const id of new Set(rows.map((s) => s.exerciseId))) {
+    loads.set(id, (catalogExercise(id) ?? (await db.customExercises.get(id)))?.load);
+  }
+  return effectiveRows(rows, (id) => loads.get(id), bodyKg(settings.bodyWeightKg));
+}
 
 /** What a delete removed, so "Undo" can put it back. */
 export interface Snapshot {
@@ -108,10 +122,12 @@ export function finishWorkout(id: string, unchecked: 'done' | 'discard' = 'done'
 
 /** A new active workout with the same exercises and numbers as a past one. */
 export function repeatWorkout(id: string): Promise<string> {
-  return db.transaction('rw', db.workouts, db.sets, async () => {
+  return db.transaction('rw', db.workouts, db.sets, db.customExercises, async () => {
+    const source = await db.workouts.get(id);
     const copyId = await createWorkout();
     const date = toISODate();
-    const sets = await db.sets.where('workoutId').equals(id).toArray();
+    const rows = await db.sets.where('workoutId').equals(id).toArray();
+    const sets = source?.status === 'done' ? await effectiveHistory(rows) : rows;
     await db.sets.bulkAdd(sets.map((s) => ({ ...s, id: newId(), workoutId: copyId, date, done: false })));
     return copyId;
   });
@@ -147,20 +163,29 @@ export function createFromPlan(plan: WorkoutPlan, status: 'active' | 'planned'):
   });
 }
 
+/** How much of a suggestion a plan from today has to hold to still be that suggestion, edited. */
+const SAME_PLAN_SHARE = 0.5;
+
 /**
- * The planned workout to edit `plan` in. One already waiting from today, or with the same
- * exercises, is opened as it is, so editing again never adds a second copy.
+ * The planned workout to edit `plan` in. One with the same exercises is opened as it is, and so is
+ * one from today that starts the same way and holds most of them, since that's this plan with the
+ * user's changes in it. So editing again never adds a second copy, and any other type or variant
+ * gets its own plan.
  */
 export function planForEditing(plan: WorkoutPlan): Promise<string> {
   return db.transaction('rw', db.workouts, db.sets, async () => {
-    const wanted = plan.exercises.map((e) => e.exerciseId).join('|');
+    const wanted = plan.exercises.map((e) => e.exerciseId);
     const today = toISODate();
+    const planned = [];
     for (const workout of await db.workouts.where('status').equals('planned').toArray()) {
-      if (workout.date === today) return workout.id;
       const sets = await db.sets.where('workoutId').equals(workout.id).toArray();
-      if (groupEntries(sets).map((e) => e.exerciseId).join('|') === wanted) return workout.id;
+      planned.push({ id: workout.id, today: workout.date === today, ids: groupEntries(sets).map((e) => e.exerciseId) });
     }
-    return createFromPlan(plan, 'planned');
+    const same = (ids: string[]) => ids.join('|') === wanted.join('|');
+    const edited = (ids: string[]) => ids[0] === wanted[0] && wanted.filter((id) => ids.includes(id)).length / wanted.length >= SAME_PLAN_SHARE;
+    const fromToday = planned.filter((p) => p.today);
+    const found = fromToday.find((p) => same(p.ids)) ?? fromToday.find((p) => edited(p.ids)) ?? planned.find((p) => same(p.ids));
+    return found?.id ?? createFromPlan(plan, 'planned');
   });
 }
 
@@ -198,8 +223,9 @@ export interface Performance {
 }
 
 /**
- * The latest finished workout with this exercise, on or before `before`. Planned and active
- * workouts don't count, and `excludeWorkoutId` leaves out the workout being logged.
+ * The latest finished workout with this exercise, on or before `before`, read as effectiveHistory()
+ * reads it. Planned and active workouts don't count, and `excludeWorkoutId` leaves out the workout
+ * being logged.
  */
 export async function lastPerformance(
   exerciseId: string,
@@ -224,14 +250,14 @@ export async function lastPerformance(
       .sort((a, b) => a.entry - b.entry || a.order - b.order);
     const all = await db.sets.where('workoutId').equals(row.workoutId).toArray();
     const order = [...new Set(all.map((s) => s.entry))].sort((x, y) => x - y);
-    return { workoutId: row.workoutId, date: row.date, sets, position: order.indexOf(sets[0].entry) + 1 };
+    return { workoutId: row.workoutId, date: row.date, sets: await effectiveHistory(sets), position: order.indexOf(sets[0].entry) + 1 };
   }
   return null;
 }
 
 /** Adds an exercise as a new card, filled in with last time's sets when there are any. */
 export function addExercise(workoutId: string, exerciseId: string): Promise<number> {
-  return db.transaction('rw', db.workouts, db.sets, async () => {
+  return db.transaction('rw', db.workouts, db.sets, db.customExercises, async () => {
     const workout = await db.workouts.get(workoutId);
     if (!workout) throw new Error('No such workout');
     const existing = await db.sets.where('workoutId').equals(workoutId).toArray();
@@ -378,10 +404,16 @@ export interface WorkoutSummary {
 
 /** What a page of workouts holds, without reading the whole history. */
 export async function summarize(workoutIds: string[]): Promise<Map<string, WorkoutSummary>> {
-  const [sets, custom] = await Promise.all([db.sets.where('workoutId').anyOf(workoutIds).toArray(), db.customExercises.toArray()]);
+  const [sets, custom, workouts] = await Promise.all([
+    db.sets.where('workoutId').anyOf(workoutIds).toArray(),
+    db.customExercises.toArray(),
+    db.workouts.bulkGet(workoutIds),
+  ]);
   const exercises = new Map<string, Exercise>([...CATALOG, ...custom].map((e) => [e.id, e]));
   const perWorkout = new Map<string, WorkoutSet[]>(workoutIds.map((id) => [id, []]));
-  for (const set of sets) perWorkout.get(set.workoutId)!.push(set);
+  const finished = new Set(workouts.filter((w) => w?.status === 'done').map((w) => w?.id));
+  const history = await effectiveHistory(sets.filter((s) => finished.has(s.workoutId)));
+  for (const set of [...history, ...sets.filter((s) => !finished.has(s.workoutId))]) perWorkout.get(set.workoutId)!.push(set);
   const summaries = new Map<string, WorkoutSummary>();
   for (const [id, rows] of perWorkout) {
     summaries.set(id, {

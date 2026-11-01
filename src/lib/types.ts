@@ -159,4 +159,6 @@ export interface StallRecord {
   action: StallAction;
   date: string;
   helped?: boolean;
+  /** What the choice replaced, so it can be undone. Older records don't have it. */
+  before?: Pick<ExerciseSettings, 'repLow' | 'repHigh' | 'goal'>;
 }

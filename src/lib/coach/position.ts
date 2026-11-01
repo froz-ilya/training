@@ -53,7 +53,12 @@ export function adjustPoints(points: StrengthPoint[], cost: number): StrengthPoi
   const positions = points.flatMap((p) => (p.position === undefined ? [] : [p.position]));
   if (!positions.length) return points;
   const usual = median(positions);
-  return points.map((p) => (p.position === undefined ? p : { ...p, value: p.value / positionFactor(p.position, usual, cost) }));
+  return points.map((p) => {
+    if (p.position === undefined) return p;
+    const factor = positionFactor(p.position, usual, cost);
+    const work = p.work?.map((set) => ({ ...set, estimate: set.estimate / factor }));
+    return { ...p, value: p.value / factor, ...(work ? { work } : {}) };
+  });
 }
 
 /**

@@ -1,12 +1,13 @@
 import { CATALOG, catalogExercise } from '../catalog/exercises';
 import { groupOf, mainGroups, type MuscleGroup } from '../catalog/groups';
 import { toISODate } from '../dates';
+import { effectiveHistory } from '../db/repo';
 import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
 import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, StallAction, StallRecord, WorkoutSet } from '../types';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
-import { planNextType, rotationTypeCount, type RotationWorkout } from './next';
+import { planNextType, rotationTypeCount, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
 import { alternateRange, lighterWeekActive, resolveOutcomes } from './plateau';
 import { countRecent, groupSummaries, type GroupSummary, type Overview } from './overview';
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
@@ -133,7 +134,7 @@ async function finishedSets(): Promise<{ sets: WorkoutSet[]; workouts: Map<strin
   const finished = await db.workouts.where('status').equals('done').toArray();
   const workouts = new Map(finished.map((w) => [w.id, { date: w.date }]));
   const all = await db.sets.toArray();
-  return { sets: all.filter((s) => s.done && workouts.has(s.workoutId)), workouts };
+  return { sets: await effectiveHistory(all.filter((s) => s.done && workouts.has(s.workoutId))), workouts };
 }
 
 async function exerciseMap(): Promise<Map<string, Exercise>> {
@@ -207,7 +208,7 @@ export async function loadExerciseView(id: string, position?: number): Promise<E
     db.exerciseNotes.where('exerciseId').equals(id).toArray(),
   ]);
   const done = new Set(finished);
-  const own = rows.filter((s) => s.done && done.has(s.workoutId));
+  const own = await effectiveHistory(rows.filter((s) => s.done && done.has(s.workoutId)));
   // Positions depend on the other exercises in those workouts.
   const around = await db.sets.where('workoutId').anyOf([...new Set(own.map((s) => s.workoutId))]).toArray();
   return buildView(exercise, toSessions(own, entryRanks(around), noteIndex(notes)), stored, toISODate(), training, position);
@@ -279,10 +280,21 @@ export interface NextWorkout {
   exercises: { exercise: Exercise; sets: SetPlan[]; suggestion: Suggestion | null }[];
   /** How this week is going against the user's usual number of workouts. */
   week: WeekProgress;
+  /** Why this type, when the rotation chose between several. */
+  typeReason: { kind: TypeReason['kind']; types: MuscleGroup[] } | null;
+  /** The rotation's other types, to switch to. */
+  otherTypes: MuscleGroup[];
+  /** Why this variant of the type, when the rotation chose between several. */
+  reason: { kind: VariantReason['kind']; after: Exercise; lead: Exercise } | null;
+  /** The lead exercises of the type's other variants, to switch to. */
+  otherVariants: Exercise[];
 }
 
-/** The workout the user's rotation points to, or null with no history. */
-export async function loadNextWorkout(): Promise<NextWorkout | null> {
+/**
+ * The workout the user's rotation points to, or null with no history. `pick` swaps the suggested
+ * type or variant for another.
+ */
+export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | null> {
   const today = toISODate();
   const [{ sets, workouts }, stored, exercises, training, notes] = await Promise.all([
     finishedSets(),
@@ -294,7 +306,7 @@ export async function loadNextWorkout(): Promise<NextWorkout | null> {
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
   const { perWeek } = training;
-  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek });
+  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick);
   if (!plan) return null;
   const perExercise = group(sets, (s) => s.exerciseId);
   const list: NextWorkout['exercises'] = [];
@@ -307,7 +319,10 @@ export async function loadNextWorkout(): Promise<NextWorkout | null> {
   }
   const groups = mainGroups(list.map((e) => ({ muscle: e.exercise.muscle, sets: e.sets.filter((s) => s.kind === 'work').length })));
   const dates = [...workouts.values()].map((w) => w.date);
-  return { groups, exercises: list, week: weekProgress(dates, today, perWeek) };
+  const reason = plan.reason && { kind: plan.reason.kind, after: exercises.get(plan.reason.after)!, lead: exercises.get(plan.reason.lead)! };
+  const otherVariants = plan.otherLeads.map((id) => exercises.get(id)!);
+  const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types as MuscleGroup[] };
+  return { groups, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes as MuscleGroup[], reason, otherVariants };
 }
 
 // ---------- Saving ----------
@@ -330,12 +345,21 @@ export async function chooseStallAction(view: ExerciseView, action: StallAction)
   const date = toISODate();
   // A second tap the same day isn't a second attempt.
   if (view.records.some((r) => r.action === action && r.date === date)) return;
-  await db.stallRecords.add({ id: newId(), exerciseId: view.exercise.id, action, date });
+  const { repLow, repHigh, goal } = view.setting ?? {};
+  await db.stallRecords.add({ id: newId(), exerciseId: view.exercise.id, action, date, before: { repLow, repHigh, goal } });
   if (action === 'maintain') await saveExerciseSettings(view.exercise.id, { goal: 'maintain' });
   if (action === 'repRange') {
     const { low, high } = alternateRange(repRange(view.exercise, view.setting, view.compared));
     await saveExerciseSettings(view.exercise.id, { repLow: low, repHigh: high });
   }
+}
+
+/** Takes a plateau choice back with what it changed. An older record doesn't say, so that goes back to the default. */
+export async function undoStallAction(view: ExerciseView, record: StallRecord): Promise<void> {
+  await db.stallRecords.delete(record.id);
+  const { repLow, repHigh, goal } = record.before ?? {};
+  if (record.action === 'maintain') await saveExerciseSettings(view.exercise.id, { goal });
+  if (record.action === 'repRange') await saveExerciseSettings(view.exercise.id, { repLow, repHigh });
 }
 
 /** Fills in the outcome of past plateau choices. Runs when the progress pages open. */

@@ -28,10 +28,21 @@ export interface SessionSet {
   level?: number;
 }
 
+/** One comparable work set, as a session's whole work is compared. Worked out on reading. */
+export interface WorkSet {
+  /** Estimated strength: kg, or seconds for timed exercises. */
+  estimate: number;
+  weightKg: number;
+  /** 0 for timed sets, which go by their time. */
+  reps: number;
+}
+
 export interface StrengthPoint {
   date: string;
-  /** Estimated strength: kg, or seconds for timed exercises. */
+  /** The session's best estimate: kg, or seconds for timed exercises. */
   value: number;
+  /** The comparable work sets in order, when the point comes from a session. */
+  work?: WorkSet[];
   /** Where the exercise sat in the workout, when known. */
   position?: number;
   /** A tag says this session doesn't reflect the exercise. */
@@ -77,6 +88,72 @@ export function estimateSet(set: SessionSet, load: Load, body: number): number {
   return weight * (1 + Math.min(set.reps, cap) / 30);
 }
 
+/** A light set under this share of the session's best estimate was well short of that day's effort. */
+export const RAMP_SHARE = 0.9;
+
+/**
+ * Finished sets as they really were. History can hold a ramp-up set stored as `work`, because
+ * someone skipped the warm-up tab or a converter guessed. A `work` set reads as a warm-up when it
+ * comes before the first set at the top weight, its estimate is under RAMP_SHARE of the session's
+ * best, and a later heavier set has at least as many reps. A maximal effort can't be followed by
+ * that, whatever its `failure` mark says, so the warm-up drops the mark and new sets don't start
+ * from it.
+ *
+ * Without that proof a light set reads just like the start of a pyramid, where reps fall as the
+ * weight climbs, so it stays as stored. So does a set at another level, one with no estimate, and
+ * anything timed. Sets after the top weight are back-off sets and are never touched.
+ *
+ * Worked out on reading and never stored, so the rule can change with no migration. A workout in
+ * progress doesn't come through here: what the user marks there stands.
+ */
+export function effectiveSets<T extends SessionSet>(sets: T[], load: Load, body: number): T[] {
+  // A timed set's estimate is its time, which can't weigh added weight against it.
+  if (load === 'time') return sets;
+  const estimate = (set: SessionSet) => estimateSet(set, load, body);
+  const work = sets.filter((s) => s.kind === 'work' && estimate(s) > 0);
+  const heaviest = Math.max(...work.map((s) => s.weightKg));
+  const lead = work.find((s) => s.weightKg === heaviest);
+  if (!lead) return sets;
+  // Reps at one level say nothing about another.
+  const peers = work.filter((s) => s.level === lead.level);
+  const best = Math.max(...peers.map(estimate));
+  const before = peers.slice(0, peers.indexOf(lead));
+  const ramps = new Set<SessionSet>(
+    before.filter(
+      (set, i) =>
+        estimate(set) < RAMP_SHARE * best && peers.slice(i + 1).some((s) => s.weightKg > set.weightKg && s.reps >= set.reps),
+    ),
+  );
+  return ramps.size ? sets.map((s): T => (ramps.has(s) ? { ...s, kind: 'warmup', failure: undefined } : s)) : sets;
+}
+
+/**
+ * effectiveSets() for rows from several sessions, which come back in the order given. A session is
+ * one exercise in one workout, even when it appears there twice. With no `load` for an exercise,
+ * such as one that no longer exists, its sets stay as stored.
+ */
+export function effectiveRows<T extends SessionSet & { workoutId: string; exerciseId: string; entry: number; order: number }>(
+  rows: T[],
+  loadOf: (exerciseId: string) => Load | undefined,
+  body: number,
+): T[] {
+  const sessions = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = `${row.workoutId}:${row.exerciseId}`;
+    const list = sessions.get(key);
+    if (list) list.push(row);
+    else sessions.set(key, [row]);
+  }
+  const read = new Map<T, T>();
+  for (const list of sessions.values()) {
+    const load = loadOf(list[0].exerciseId);
+    if (!load) continue;
+    const sorted = [...list].sort((a, b) => a.entry - b.entry || a.order - b.order);
+    effectiveSets(sorted, load, body).forEach((set, i) => read.set(sorted[i], set));
+  }
+  return rows.map((row) => read.get(row) ?? row);
+}
+
 /** What a session shows in a list: its work sets, or its warm-ups when it had nothing else. */
 export function workSets(session: Session): SessionSet[] {
   const work = session.sets.filter((s) => s.kind === 'work');
@@ -111,7 +188,12 @@ export function strengthPoints(sessions: Session[], load: Load, body: number): S
   for (const session of sessions) {
     const value = sessionStrength(session, load, body);
     if (value === null) continue;
-    const point: StrengthPoint = { date: session.date, value, position: session.position };
+    const work = comparableSets(session).map(({ weightKg, reps, ...set }) => ({
+      estimate: estimateSet({ weightKg, reps, ...set }, load, body),
+      weightKg,
+      reps: load === 'time' ? 0 : reps,
+    }));
+    const point: StrengthPoint = { date: session.date, value, work, position: session.position };
     if (session.offDay) point.offDay = true;
     points.push(point);
   }

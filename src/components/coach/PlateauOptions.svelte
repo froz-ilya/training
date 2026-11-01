@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
-  import { chooseStallAction, type ExerciseView } from '../../lib/coach/data';
+  import { chooseStallAction, undoStallAction, type ExerciseView } from '../../lib/coach/data';
   import { atRotationLimit, plateauOptions, similarExercises } from '../../lib/coach/plateau';
   import { actionLabel, actionText, rotationLimitText } from '../../lib/coach/text';
   import { fmtDate } from '../../lib/dates';
@@ -8,7 +8,7 @@
   import { t } from '../../lib/i18n.svelte';
   import type { Exercise, StallAction } from '../../lib/types';
 
-  /** Choices for a stalled exercise. Picking one records it, so the outcome can be seen later. */
+  /** Choices for a stalled exercise. Picking one records it, so the outcome can be seen later; a second tap takes it back. */
   let { view }: { view: ExerciseView } = $props();
 
   const options = $derived(plateauOptions(view.points, view.records, view.expectedGapDays));
@@ -26,7 +26,11 @@
   <div class="list">
     {#each options as action (action)}
       {@const record = latest(action)}
-      <button class="list-item" onclick={() => chooseStallAction(view, action)}>
+      <button
+        class="list-item"
+        aria-pressed={!!record}
+        onclick={() => (record && !record.helped ? undoStallAction(view, record) : chooseStallAction(view, action))}
+      >
         <span class="body">
           <span class="title">{actionLabel(action)}</span>
           <span class="sub">{action === 'frequency' && limited ? rotationLimitText(view.perWeek) : actionText(action)}</span>

@@ -1,4 +1,4 @@
-import { leadingGroup } from '../catalog/groups';
+import { groupOf, leadingGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
 import type { Exercise } from '../types';
 import { expectedGapDays } from './frequency';
@@ -12,9 +12,36 @@ export interface RotationWorkout {
   workSets: Record<string, number>;
 }
 
+/** Why this type. `types` is what to show, in order: what was just done, then this one. */
+export interface TypeReason {
+  kind: 'usual' | 'before' | 'longest';
+  types: string[];
+}
+
+/** Why this variant of the type. Ids are exercises; `after` is the lead of the workout the rotation stands at. */
+export interface VariantReason {
+  kind: 'alternate' | 'again' | 'afterOneOff';
+  after: string;
+  lead: string;
+}
+
 export interface PlannedType {
   key: string;
   exerciseIds: string[];
+  /** Null with a single regular type, or when another type was picked. */
+  typeReason: TypeReason | null;
+  /** The rotation's other types, to switch to: the suggestion first, then the one left longest. */
+  otherTypes: string[];
+  /** Null with fewer than two regular variants, or when another variant was picked. */
+  reason: VariantReason | null;
+  /** The leads of the type's other variants, to switch to: the suggestion first. */
+  otherLeads: string[];
+}
+
+/** Another type or variant than the suggested one, for today only. Unknown ones are ignored. */
+export interface NextPick {
+  type?: string;
+  lead?: string;
 }
 
 /** How far back the rotation looks. */
@@ -23,6 +50,9 @@ const TYPE_LOOKBACK = 10;
 const MIN_EXERCISES = 3;
 const MAX_EXERCISES = 6;
 const ANCHORS = 3;
+/** How much of a workout has to match a variant for a lead seen once to be a small change to it. */
+const SAME_SHARE = 2 / 3;
+const MAX_OTHER_VARIANTS = 4;
 
 /** A key per workout: the group it trained most, or '' with no known exercises. */
 export function rotationKeys(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[] {
@@ -35,29 +65,53 @@ export function rotationKeys(workouts: RotationWorkout[], exercises: Map<string,
   });
 }
 
-/** The type that usually follows the latest one; on a tie, the one left longest. */
+/** Keys seen more than once. */
+function repeated(keys: string[]): string[] {
+  const seen = new Map<string, number>();
+  for (const key of keys) if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
+  return [...seen].filter(([, n]) => n > 1).map(([key]) => key);
+}
+
+/** How often each key came straight after `tail`. */
+function countAfter(known: string[], tail: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (let i = tail.length; i < known.length; i++) {
+    if (tail.every((key, j) => known[i - tail.length + j] === key)) counts.set(known[i], (counts.get(known[i]) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** What followed the last two keys; if none of `candidates` ever did, what followed the last one. */
+function following(known: string[], candidates: string[]): { tail: string[]; counts: Map<string, number> } {
+  const pair = known.slice(-2);
+  const counts = countAfter(known, pair);
+  if (candidates.some((key) => counts.has(key))) return { tail: pair, counts };
+  const tail = known.slice(-1);
+  return { tail, counts: countAfter(known, tail) };
+}
+
+/** Of `candidates`, what has most often come after the latest keys; on a tie, the one left longest. */
+function mostFollowing(known: string[], candidates: string[]): string {
+  const { counts } = following(known, candidates);
+  const lastSeen = (key: string) => known.lastIndexOf(key);
+  return [...candidates].sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || lastSeen(a) - lastSeen(b))[0];
+}
+
+/** The types that can come next: not the latest, and no one-offs while there are regular ones. */
+function keyChoices(known: string[]): string[] {
+  const others = [...new Set(known)].filter((k) => k !== known[known.length - 1]);
+  // A type done once in this window was a one-off, not part of the rotation.
+  const twice = repeated(known);
+  const regular = others.filter((k) => twice.includes(k));
+  return regular.length ? regular : others;
+}
+
+/** The type that usually follows the latest two; on a tie, the one left longest. */
 export function nextKey(keys: string[]): string | null {
   const known = keys.filter(Boolean);
   if (!known.length) return null;
-  const last = known[known.length - 1];
-  const others = [...new Set(known)].filter((k) => k !== last);
-  if (!others.length) return last;
-
-  // A type done once in this window was a one-off, not part of the rotation.
-  const seen = new Map<string, number>();
-  for (const key of known) seen.set(key, (seen.get(key) ?? 0) + 1);
-  const regular = others.filter((k) => (seen.get(k) ?? 0) > 1);
-  const candidates = regular.length ? regular : others;
-
-  const follows = new Map<string, number>();
-  for (let i = 1; i < known.length; i++) {
-    if (known[i - 1] === last) follows.set(known[i], (follows.get(known[i]) ?? 0) + 1);
-  }
-  const lastSeen = (key: string) => known.lastIndexOf(key);
-  return [...candidates].sort((a, b) => {
-    const diff = (follows.get(b) ?? 0) - (follows.get(a) ?? 0);
-    return diff || lastSeen(a) - lastSeen(b);
-  })[0];
+  const choices = keyChoices(known);
+  return choices.length ? mostFollowing(known, choices) : known[known.length - 1];
 }
 
 /** The user's week, so the rotation can catch up with a type that has waited too long. */
@@ -68,10 +122,8 @@ export interface RotationPace {
 
 /** Types done more than once; one-offs aren't part of the rotation. */
 function regularKeys(keys: string[]): string[] {
-  const seen = new Map<string, number>();
-  for (const key of keys) if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
-  const regular = [...seen].filter(([, n]) => n > 1).map(([key]) => key);
-  return regular.length ? regular : [...seen.keys()];
+  const regular = repeated(keys);
+  return regular.length ? regular : [...new Set(keys.filter(Boolean))];
 }
 
 /** How many types the rotation goes through. */
@@ -98,27 +150,102 @@ export function overdueKey(keys: string[], dates: string[], pace: RotationPace):
   return waited(longest) >= dueBy && clearly ? longest : pick;
 }
 
+/** Why the rotation suggests `key`, told only as far as the user's own history backs it up. */
+function typeReason(keys: string[], key: string): TypeReason | null {
+  if (regularKeys(keys).length < 2) return null;
+  const known = keys.filter(Boolean);
+  // True only if nothing, one-offs included, has waited longer.
+  const longest = (): TypeReason | null => (known.some((k) => known.lastIndexOf(k) < known.lastIndexOf(key)) ? null : { kind: 'longest', types: [key] });
+  // Anything but the usual choice was overdue.
+  if (key !== nextKey(keys)) return longest();
+  const choices = keyChoices(known);
+  const { tail, counts } = following(known, choices);
+  const count = counts.get(key) ?? 0;
+  if (!count) return longest();
+  const mostOften = choices.every((k) => k === key || (counts.get(k) ?? 0) < count);
+  return { kind: count > 1 && mostOften ? 'usual' : 'before', types: [...tail, key] };
+}
+
+/** The exercise a workout is built around: the first worked one of its type, so a warm-up doesn't count. */
+function leadOf(workout: RotationWorkout, key: string, exercises: Map<string, Exercise>): string {
+  const known = workout.exerciseIds.filter((id) => exercises.has(id));
+  const worked = known.filter((id) => workout.workSets[id]);
+  const main = worked.length ? worked : known;
+  return main.find((id) => groupOf(exercises.get(id)!.muscle) === key) ?? main[0];
+}
+
 /**
- * The next workout from the user's own rotation: the main lifts of the type's last workout stay,
- * and the remaining slots rotate through what they've done for that type recently. Same muscle
- * first, then whatever was done longest ago. Null with no history.
+ * Which variant of a type each workout was, named by its lead. A lead seen once that shares most of
+ * its exercises with a regular variant is that variant with a small change: the bench was taken, say.
+ * A lead that comes back stays its own variant even with the same exercises, because changing the
+ * order on purpose is a plan, and following it does no harm when it isn't.
  */
-export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace): PlannedType | null {
+export function variantLeads(workouts: RotationWorkout[], key: string, exercises: Map<string, Exercise>): string[] {
+  const leads = workouts.map((workout) => leadOf(workout, key, exercises));
+  const regular = repeated(leads);
+  const doneIn = regular.map((lead) => ({ lead, ids: new Set(workouts.flatMap((w, i) => (leads[i] === lead ? w.exerciseIds : []))) }));
+  return leads.map((lead, i) => {
+    if (regular.includes(lead)) return lead;
+    const known = workouts[i].exerciseIds.filter((id) => exercises.has(id));
+    const shareOf = (ids: Set<string>) => known.filter((id) => ids.has(id)).length / known.length;
+    const closest = doneIn.filter((v) => shareOf(v.ids) >= SAME_SHARE).sort((a, b) => shareOf(b.ids) - shareOf(a.ids))[0];
+    return closest?.lead ?? lead;
+  });
+}
+
+/**
+ * The variant that usually follows the latest regular one; on a tie, the one left longest. One-offs
+ * are left out of the order. Unlike a type, a variant may follow itself: someone who mostly repeats
+ * one variant shouldn't be sent to the other every time. Null until a variant repeats.
+ */
+export function nextVariant(leads: string[]): string | null {
+  const regular = repeated(leads);
+  const known = leads.filter((lead) => regular.includes(lead));
+  if (!known.length) return null;
+  return mostFollowing(known, regular);
+}
+
+function variantReason(workouts: RotationWorkout[], leads: string[], lead: string, key: string, exercises: Map<string, Exercise>): VariantReason | null {
+  const regular = repeated(leads);
+  if (regular.length < 2) return null;
+  let at = leads.length - 1;
+  while (!regular.includes(leads[at])) at--;
+  // A small change counts as its variant, but the reason says what that workout really had.
+  const after = leadOf(workouts[at], key, exercises);
+  if (lead === leads[at]) return { kind: 'again', after, lead };
+  return { kind: at === leads.length - 1 ? 'alternate' : 'afterOneOff', after, lead };
+}
+
+/**
+ * The next workout from the user's own rotation: the type's next variant, with the main lifts of
+ * that variant's last workout kept and the remaining slots rotating through what they've done for it
+ * recently. Same muscle first, then whatever was done longest ago. `pick` swaps the suggested type
+ * or variant for another, and everything else then works the same. Null with no history.
+ */
+export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace, pick: NextPick = {}): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
   const keys = rotationKeys(usable, exercises);
-  const key = pace ? overdueKey(keys, usable.map((w) => w.date), pace) : nextKey(keys);
-  if (key === null) return null;
+  const suggestedKey = pace ? overdueKey(keys, usable.map((w) => w.date), pace) : nextKey(keys);
+  if (suggestedKey === null) return null;
+  const key = pick.type && keys.includes(pick.type) ? pick.type : suggestedKey;
 
   const ofType = usable.filter((_, i) => keys[i] === key).slice(-TYPE_LOOKBACK);
-  const latest = ofType[ofType.length - 1];
+  const leads = variantLeads(ofType, key, exercises);
+  const suggested = nextVariant(leads) ?? leads[leads.length - 1];
+  const variant = pick.lead && leads.includes(pick.lead) ? pick.lead : suggested;
+
+  const scope = ofType.filter((_, i) => leads[i] === variant);
+  // A small change can swap the lead for a day, so the plan comes from a workout with the real one.
+  const own = scope.filter((w) => leadOf(w, key, exercises) === variant);
+  const latest = own[own.length - 1];
   const known = latest.exerciseIds.filter((id) => exercises.has(id));
-  const sizes = ofType.map((w) => w.exerciseIds.length).sort((a, b) => a - b);
+  const sizes = scope.map((w) => w.exerciseIds.length).sort((a, b) => a - b);
   const size = Math.min(MAX_EXERCISES, Math.max(MIN_EXERCISES, sizes[Math.floor(sizes.length / 2)]));
 
   const kept = known.slice(0, Math.min(ANCHORS, known.length));
   const lastUsed = new Map<string, string>();
-  for (const workout of ofType) for (const id of workout.exerciseIds) lastUsed.set(id, workout.date);
+  for (const workout of scope) for (const id of workout.exerciseIds) lastUsed.set(id, workout.date);
   const pool = [...lastUsed.keys()]
     .filter((id) => exercises.has(id) && !kept.includes(id) && (!known.includes(id) || lastUsed.get(id) !== latest.date))
     .sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
@@ -135,5 +262,19 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
     if (chosen.length >= size) break;
     if (!chosen.includes(id)) chosen.push(id);
   }
-  return { key, exerciseIds: chosen };
+
+  const regular = repeated(leads);
+  const newestFirst = [...leads].reverse();
+  const otherLeads = [...new Set([suggested, ...newestFirst.filter((l) => regular.includes(l)), ...newestFirst])]
+    .filter((l) => l !== variant)
+    .slice(0, MAX_OTHER_VARIANTS);
+  const leftLongest = regularKeys(keys).sort((a, b) => keys.lastIndexOf(a) - keys.lastIndexOf(b));
+  return {
+    key,
+    exerciseIds: chosen,
+    typeReason: key === suggestedKey ? typeReason(keys, key) : null,
+    otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),
+    reason: variant === suggested ? variantReason(ofType, leads, variant, key, exercises) : null,
+    otherLeads,
+  };
 }

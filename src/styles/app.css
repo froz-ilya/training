@@ -1,0 +1,874 @@
+/* Design tokens + shared utility classes. Components use these instead of ad-hoc colors.
+ *
+ * Theme: "ink & saffron" (dark only). A deep blue-black ink base with layered, slightly
+ * blue surfaces, hairline edges instead of borders, and one warm signature accent (saffron)
+ * for primary actions and progress.
+ */
+
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/nunito-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/nunito-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url('/fonts/nunito-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  /* Type */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Nunito', ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-read: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+
+  /* Shape + spacing scale */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius: 18px;
+  --radius-lg: 26px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Motion: iOS-like ease-out. Durations are for CSS; JS uses dur() from lib/motion.ts. */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 160ms;
+  --dur: 300ms;
+  --dur-slow: 450ms;
+  /* Height of the bottom tab bar incl. safe area; 0 on pages without it (see TabBar). */
+  --tabbar-h: 0px;
+}
+
+/*
+ * Colors. <html data-theme="light|dark"> is set by lib/theme.svelte.ts (and an inline script in
+ * index.html before first paint). Dark is also the fallback when no theme is set.
+ *
+ * Token roles (same in both themes):
+ *   --bg / --surface / --surface-2 / --surface-3 / --surface-raised   page → cards → controls → sheets
+ *   --text / --text-2 / --muted / --faint                               primary → secondary → tertiary → decorative
+ *   --accent        accent as a text/icon/progress color (AA on --bg and --surface)
+ *   --accent-fill   accent as a button/badge fill, always with --accent-text on top
+ *   --accent-bar    accent for progress bars, rings and status dots (≥3:1 on surfaces)
+ *   --accent-strong / --good-strong / --warn-strong / --bad-strong
+ *                   tone as small text on its own tint or on --surface-2 (AA at 12px)
+ *   --on-tone       text on solid good/bad/warn/gender/--accent fills
+ */
+
+/* ---------- Dark: "ink & saffron" ---------- */
+:root,
+:root[data-theme='dark'] {
+  /* Ink: page, layered surfaces (each step a little lighter and bluer) */
+  --bg: #0d1017;
+  --surface: #161b26;
+  --surface-2: #212737;
+  --surface-3: #2b3245;
+  --surface-raised: #1b2130;
+  --border: #283044;
+  /* Soft 1px edge used on cards instead of a hard border */
+  --hairline: rgb(255 255 255 / 0.06);
+  /* Sunken wells inside a card (example sentences) */
+  --inset-bg: rgb(0 0 0 / 0.18);
+  /* Segmented control: track + selected segment */
+  --seg-bg: var(--surface);
+  --seg-active: var(--surface-3);
+  /* Feature surface (Today hero, flashcards, results): ink lit from the top-left */
+  --grad-feature: linear-gradient(155deg, #252d4d 0%, #1b2138 52%, #161b2a 100%);
+  /* The faint dawn at the top of every screen */
+  --dawn:
+    radial-gradient(90% 70% at 15% -20%, rgb(92 112 200 / 0.16), transparent 70%),
+    radial-gradient(60% 50% at 100% -10%, rgb(246 195 91 / 0.05), transparent 70%);
+  --text: #edf0f7;
+  /* Secondary text (translations under a word), then muted, then faint (chevrons, placeholders) */
+  --text-2: #c4cad8;
+  /* Reader body text: a slightly warm paper-white, easier on the eyes for long reading */
+  --text-read: #e7e3da;
+  --muted: #8f97ab;
+  --faint: #5f677b;
+
+  /* Signature accent: saffron (warm, calm, the complement of the ink blue) */
+  --accent: #f6c35b;
+  --accent-fill: #f6c35b;
+  /* Progress bars, rings and status dots */
+  --accent-bar: #f6c35b;
+  --accent-text: #1b1405;
+  --accent-soft: rgb(246 195 91 / 0.14);
+  --accent-glow: rgb(246 195 91 / 0.32);
+  --on-tone: #1b1405;
+
+  /* Feedback */
+  --good: #5ad48a;
+  --bad: #ff6f7d;
+  --warn: #ff9d5c;
+  --accent-strong: var(--accent);
+  --good-strong: var(--good);
+  --warn-strong: var(--warn);
+  --bad-strong: var(--bad);
+
+  /* Depth: a hairline edge + a soft, low shadow (dark UIs read depth from light, not shade) */
+  --shadow: inset 0 0 0 1px var(--hairline), 0 10px 24px -16px rgb(0 0 0 / 0.7);
+  --shadow-sm: 0 4px 12px -6px rgb(0 0 0 / 0.6);
+  --shadow-lg: inset 0 0 0 1px var(--hairline), 0 24px 60px -12px rgb(0 0 0 / 0.75);
+  --shadow-feature: inset 0 0 0 1px rgb(255 255 255 / 0.07), 0 20px 40px -24px rgb(0 0 0 / 0.9);
+  --shadow-accent: 0 10px 26px -10px var(--accent-glow);
+  /* Edge of a page sliding over another (page transitions, edge-swipe back) */
+  --shadow-edge: -8px 0 32px rgb(0 0 0 / 0.5);
+
+  /* Translucent bars, overlays, toasts */
+  --chrome-bg: rgb(13 16 23 / 0.8);
+  --backdrop: rgb(4 6 10 / 0.62);
+  --focus-ring: rgb(246 195 91 / 0.35);
+  --toast-bg: #262d3f;
+  --toast-text: #edf0f7;
+  --toast-action: #f6c35b;
+  --skeleton-shine: #2a3144;
+  color-scheme: dark;
+}
+
+/* ---------- Light: "paper & amber" (same brand on warm paper) ---------- */
+:root[data-theme='light'] {
+  --bg: #f6f3ec;
+  --surface: #ffffff;
+  --surface-2: #efebe2;
+  --surface-3: #e3ded2;
+  --surface-raised: #ffffff;
+  --border: #e3ddd0;
+  --hairline: rgb(40 34 20 / 0.08);
+  --inset-bg: rgb(40 34 20 / 0.04);
+  --seg-bg: var(--surface-2);
+  --seg-active: #ffffff;
+  --grad-feature: linear-gradient(155deg, #fff1d2 0%, #fff8ea 48%, #ffffff 100%);
+  --dawn:
+    radial-gradient(90% 70% at 15% -20%, rgb(246 195 91 / 0.16), transparent 70%),
+    radial-gradient(60% 50% at 100% -10%, rgb(110 130 220 / 0.07), transparent 70%);
+  --text: #161a26;
+  --text-2: #3d4356;
+  --text-read: #26241f;
+  --muted: #646a7c;
+  --faint: #a4a8b3;
+
+  /* Deep amber reads as text on paper (AA); buttons keep the brighter saffron fill */
+  --accent: #9a6100;
+  --accent-fill: #f4b942;
+  --accent-bar: #c98208;
+  --accent-text: #1b1405;
+  --accent-soft: rgb(232 160 32 / 0.16);
+  --accent-glow: rgb(232 160 32 / 0.45);
+  --on-tone: #ffffff;
+
+  --good: #15803d;
+  --bad: #c9283d;
+  --warn: #c2410c;
+  --accent-strong: #875400;
+  --good-strong: #116a32;
+  --warn-strong: #a63609;
+  --bad-strong: #a81e34;
+
+  --shadow: inset 0 0 0 1px var(--hairline), 0 1px 2px rgb(60 48 20 / 0.05), 0 10px 22px -16px rgb(60 48 20 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(60 48 20 / 0.1), 0 4px 10px -6px rgb(60 48 20 / 0.25);
+  --shadow-lg: inset 0 0 0 1px var(--hairline), 0 24px 48px -16px rgb(40 34 20 / 0.28);
+  --shadow-feature: inset 0 0 0 1px rgb(154 97 0 / 0.12), 0 18px 36px -22px rgb(120 80 20 / 0.35);
+  --shadow-accent: 0 10px 22px -10px var(--accent-glow);
+  --shadow-edge: -8px 0 28px rgb(40 34 20 / 0.16);
+
+  --chrome-bg: rgb(246 243 236 / 0.84);
+  --backdrop: rgb(20 22 30 / 0.32);
+  --focus-ring: rgb(154 97 0 / 0.28);
+  --toast-bg: #1d2130;
+  --toast-text: #f3f1ec;
+  --toast-action: #f6c35b;
+  --skeleton-shine: #f9f7f2;
+  color-scheme: light;
+}
+
+/* Pages on a tab root leave room for the fixed tab bar. */
+html:has(.app-tabbar) {
+  --tabbar-h: calc(58px + var(--safe-bottom));
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.4 var(--font-ui);
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  /* Horizontal only: keeps iOS's vertical rubber-band bounce, but stops sideways swipes from
+     triggering browser back/forward (the app has its own edge-swipe back). */
+  overscroll-behavior-x: none;
+}
+
+/* A faint blue dawn at the top of every screen, so the ink isn't a flat slab. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto;
+  height: 420px;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--dawn);
+}
+
+/* Status bar scrim: content scrolls under the translucent iOS status bar. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--safe-top);
+  z-index: 25;
+  pointer-events: none;
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ≥16px prevents iOS from zooming into focused inputs. */
+input,
+select,
+textarea {
+  font-size: 17px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.2;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Long translations ("последствие; череда, ряд; эпизод") wrap instead of overflowing. */
+p,
+li,
+.title,
+.sub {
+  overflow-wrap: break-word;
+}
+
+/* ---------- Layout ---------- */
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: calc(var(--safe-top) + 8px) 16px calc(max(var(--safe-bottom), var(--tabbar-h)) + 32px);
+}
+
+.section {
+  margin-top: 28px;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 0 4px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 14px;
+}
+
+.center {
+  text-align: center;
+}
+
+/* ---------- Surfaces ---------- */
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+/* Grouped list, iOS-settings style: <div class="list"><a class="list-item">…</a></div> */
+.list {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 11px 16px;
+  color: inherit;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+/* Inset separators (start after the leading padding, like iOS) */
+.list-item + .list-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  border-top: 1px solid var(--border);
+  opacity: 0.7;
+}
+
+.list-item {
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.list-item:active {
+  background: var(--surface-2);
+  transition-duration: 0s;
+}
+
+/* Any tappable card/tile: <button class="card pressable"> */
+.pressable {
+  transition: transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+  cursor: pointer;
+}
+
+.pressable:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+.list-item .title {
+  font-weight: 600;
+}
+
+.list-item .sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px 16px;
+}
+
+/* Tinted round icon badge: <span class="badge-icon tone-accent"><Icon …/></span> */
+.badge-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 13px;
+  color: var(--tone, var(--accent));
+  background: color-mix(in srgb, var(--tone, var(--accent)) 15%, transparent);
+}
+
+/* "Beta" tag next to a title: <span class="beta-tag">Beta</span> */
+.beta-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: 0.1em;
+  color: var(--tier-b);
+  background: color-mix(in srgb, var(--tier-b) 16%, transparent);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 10px 18px;
+  border-radius: 14px;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.btn:active {
+  opacity: 0.85;
+  transform: scale(0.97);
+}
+
+.btn:disabled:active {
+  transform: none;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent-fill);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-accent);
+}
+
+.btn-primary:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--bad);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-lg {
+  min-height: 56px;
+  font-size: 18px;
+  border-radius: 16px;
+}
+
+/* Round icon button (speaker, star, …) */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.icon-btn:active {
+  background: var(--surface-2);
+  transform: scale(0.92);
+}
+
+/* ---------- Forms ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > label,
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.input {
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.input::placeholder {
+  color: var(--faint);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--focus-ring);
+}
+
+textarea.input {
+  min-height: 90px;
+  resize: vertical;
+}
+
+/* Segmented control: <div class="segmented"><button class:active={…}>…</button>…</div> */
+.segmented {
+  display: flex;
+  background: var(--seg-bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  border-radius: 14px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.segmented button {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.segmented button.active {
+  background: var(--seg-active);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-size: 14px;
+  font-weight: 600;
+  position: relative;
+  /* With the hit area below, a chip takes 44px of a row and of a scrolling strip, which would clip it. */
+  margin-block: 5px;
+}
+
+button.chip::after {
+  content: '';
+  position: absolute;
+  inset: -5px 0;
+}
+
+/* A 13px box is too small for a thumb: the box grows, and its label fills a 44px row. */
+input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent-bar);
+  cursor: pointer;
+}
+
+label:has(> input[type='checkbox']) {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+/* "To failure" beside a number. A tag, so the Russian О never reads as a zero on the end of it. */
+.failure-mark {
+  display: inline-block;
+  min-width: 14px;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+  vertical-align: 2px;
+}
+
+.good {
+  color: var(--good);
+}
+.bad {
+  color: var(--bad);
+}
+
+/* ---------- Focus ---------- */
+
+/* Keyboard focus only (taps don't show rings). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.segmented button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring), inset 0 0 0 1.5px var(--accent);
+}
+
+.list-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* ---------- Motion utilities ---------- */
+/* Use on any element: class="fade-in" / "anim-pop" / "anim-shake" / "anim-pulse". Re-trigger by
+   re-mounting (e.g. {#key}) or toggling the class. */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-7px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes pulse-good {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+.fade-in {
+  animation: fade-in var(--dur) var(--ease) both;
+}
+
+.anim-pop {
+  animation: pop var(--dur) var(--ease) both;
+}
+
+.anim-shake {
+  animation: shake 0.4s var(--ease-in-out);
+}
+
+.anim-pulse {
+  animation: pulse-good 0.6s var(--ease);
+}
+
+/* ---------- Page transitions (View Transitions API, driven by lib/router.svelte.ts) ---------- */
+/* <html data-nav="forward|back|tab"> is set for the duration of a navigation. */
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: var(--dur);
+  animation-timing-function: var(--ease);
+}
+
+html[data-nav='forward']::view-transition-old(root),
+html[data-nav='forward']::view-transition-new(root),
+html[data-nav='back']::view-transition-old(root),
+html[data-nav='back']::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation-fill-mode: both;
+}
+
+/* forward: new page slides in from the right over the old one, which shifts left and dims */
+html[data-nav='forward']::view-transition-old(root) {
+  animation-name: vt-shift-out;
+}
+html[data-nav='forward']::view-transition-new(root) {
+  animation-name: vt-slide-in;
+  box-shadow: var(--shadow-edge);
+}
+
+/* back: the reverse; the leaving page stays on top */
+html[data-nav='back']::view-transition-old(root) {
+  z-index: 1;
+  animation-name: vt-slide-out;
+  box-shadow: var(--shadow-edge);
+}
+html[data-nav='back']::view-transition-new(root) {
+  animation-name: vt-shift-in;
+}
+
+/* tab: quick crossfade; the tab bar stays put */
+html[data-nav='tab']::view-transition-old(root),
+html[data-nav='tab']::view-transition-new(root),
+html[data-nav='tab']::view-transition-group(tabbar),
+html[data-nav='tab']::view-transition-old(tabbar),
+html[data-nav='tab']::view-transition-new(tabbar) {
+  animation-duration: var(--dur-fast);
+}
+html[data-nav='tab'] .app-tabbar {
+  view-transition-name: tabbar;
+}
+
+@keyframes vt-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-shift-out {
+  to {
+    transform: translateX(-30%);
+    filter: brightness(0.85);
+  }
+}
+@keyframes vt-slide-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-shift-in {
+  from {
+    transform: translateX(-30%);
+    filter: brightness(0.85);
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  .btn:active,
+  .icon-btn:active,
+  .pressable:active {
+    transform: none;
+  }
+}

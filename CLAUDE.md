@@ -1,0 +1,115 @@
+# Training — notes for Claude
+
+Workout tracking PWA for anyone to use at the gym. It runs offline with no backend, and all user
+data stays on the user's device. Interface and exercise names are in Russian, English and German.
+
+Svelte 5 (runes) + TypeScript + Vite + Dexie (IndexedDB) + vite-plugin-pwa. Deployed to GitHub Pages
+from `main` (base path `/training/`). The build plan is in docs/plan.md.
+
+## Commands
+
+```bash
+npm run dev      # dev server
+npm test         # vitest (includes database migration tests)
+npm run check    # svelte-check, must stay at 0 errors / 0 warnings
+npm run build    # production build
+npm run icons    # redraw public/icons from scripts/icons.mjs
+```
+
+## Personal data never enters the repo (hard rule)
+
+This repository is public-facing. It holds only the app and general content that lets anyone use
+it for their own workouts, such as the exercise catalogue.
+
+- A user's history lives only on their device. That covers workouts, weights, notes, chat exports,
+  messages from a trainer and receipts. None of it goes into the repo, the built app, test
+  fixtures, commit messages, issues, pull requests or workflows.
+- History comes into the app on the device, from a private file the user selects. It's never
+  bundled with the app or fetched from the deployed site.
+- Scripts that convert exports write their output outside the repo, or to a gitignored path.
+- Tests and examples use invented data, never data copied from a real user.
+- Defaults and thresholds suit any user. Never tune them to one person's exercises or numbers.
+
+## User data must stay compatible (hard rule)
+
+There's no backend, so the device holds the only copy of the data. Every update must open data
+saved by any earlier version without losing anything. If a change can't be compatible, it needs a
+migration that is tested.
+
+- **IndexedDB:** never edit or remove an existing schema version. Add a new version with an upgrade
+  step that fills defaults or converts data. Only add tables and indexes; never rename or drop a
+  table or a field that holds user data.
+- **New fields** on stored records get a default in the upgrade step, or are optional and read with
+  a fallback.
+- **Raw facts only:** store what happened (date, exercise, weight, reps, set type). Strength
+  estimates, statuses and suggestions are calculated when needed, so changing how they work never
+  needs a migration.
+- **Exercise ids never change.** Names and translations live apart from the id, so they can change
+  freely. Merging two exercises keeps the old id working as an alias.
+- **Settings:** new fields get a default; saved values are merged over the defaults. Never change
+  the meaning of an existing value.
+- **localStorage:** read every key inside try/catch and validate it; unknown or missing values fall
+  back to a default.
+- **Imported history** keeps its original text on the device, so it can be read again by a better
+  importer, and importing the same data twice creates no duplicates.
+- **Backups:** the backup file carries a version number, and import must accept every older
+  version.
+- **Upgrades:** save a safety copy on the device before a schema upgrade. An old cached app that
+  finds newer data asks the user to update and doesn't touch the data.
+- **Tests:** every schema or stored-format change adds a migration test that creates the old
+  database exactly as that version stored it and checks that it opens correctly. Old schema
+  snapshots are never edited.
+
+## Scope
+
+- Suggestions and plateau detection use on-device rules. They stay editable, explain their reason
+  and never promise a result.
+- Not wanted: a keep-screen-on feature or a spoken rest timer.
+
+## Conventions
+
+- UI: shared tokens and classes in src/styles/app.css (light and dark themes via `html[data-theme]`).
+  Motion goes through `dur()` (src/lib/motion.ts) so Reduce Motion is respected.
+- No native `prompt/confirm/alert`: use src/lib/ui/dialogs.svelte.ts.
+- Version 1 of the schema isn't released yet, so it can still change. From the first deploy, the
+  rules above apply to it in full.
+- Database: schema in src/lib/db/schema.ts. Raising `SCHEMA_VERSION` also means a new
+  `this.version()` block, a step in `normalizeTables()` (src/lib/db/safety.ts) when a field or format
+  changes, and a case in src/lib/db/migration.test.ts. A new table goes in `USER_TABLES`.
+- Backup files carry the schema version of their data, so old backups and old safety copies restore
+  through the same `normalizeTables()`.
+- Exercises: src/lib/catalog/exercises.ts holds the catalogue. A user's own exercises get a
+  `custom-` id. Names always go through `nameOf()` (src/lib/exercises.svelte.ts), never a stored name.
+- Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
+- Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
+  stored, so they follow the interface language.
+- Sets: a new set starts with last time's `failure` mark, so someone who always trains to failure only
+  taps the exception, and only done sets count. `level` is copied too, and reps are never compared
+  across levels, because whether higher is easier depends on the exercise.
+- Comments: `exerciseNotes` holds them, per exercise in a workout or per set through `setId`. Built-in
+  tag ids are in src/lib/notes/tags.ts and never change; a user's own tags are in
+  `settings.customTags`. A session with an off-day tag doesn't count against an exercise, but a new
+  best in it still counts, and `pain` blocks an increase at the next session.
+
+## Interface language
+
+The interface is in English, German and Russian (`settings.uiLang`: auto, en, de, ru; auto follows
+the phone). Exercise names have their own setting (`settings.exerciseLang`).
+
+- Text the user can see never goes in code: it's a key in src/lib/i18n/messages/<area>.ts, with all
+  three languages side by side. Each file's English object ends in `as const`, or placeholders aren't
+  type-checked. `npm run check` fails on a missing or unknown key, and src/lib/i18n.test.ts on
+  different placeholders.
+- `t('key', { name })` in .svelte and .ts; `tn('common.sets', n)` for counts; `tParts` when a sentence
+  has markup in it. Never build a sentence from pieces: word order differs. Russian plurals need
+  `.one`, `.few`, `.many` and `.other`.
+- Numbers and dates go through `fmtNumber()`, `fmtDate()` and `locale()`.
+- German uses informal "du". Russian uses formal "вы". German and Russian run longer than English:
+  check narrow rows and buttons at phone width.
+
+## Local environment quirks
+
+- npm's default cache isn't writable here: use `npm_config_cache=<scratchpad>/npm-cache npm …`.
+- The desktop app's preview launcher can't start servers in ~/Documents: run
+  `npx vite --port 5173 --strictPort --host 127.0.0.1` from Bash in the background and attach with
+  the `dev-attach` config in .claude/launch.json.

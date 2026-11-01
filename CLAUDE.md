@@ -89,6 +89,9 @@ migration that is tested.
 - Sets: a new set starts with last time's `failure` mark, so someone who always trains to failure only
   taps the exception, and only done sets count. `level` is copied too, and reps are never compared
   across levels, because whether higher is easier depends on the exercise.
+- Breaks: the cut grows with time away (src/lib/coach/suggest.ts, `BREAKS`). When other exercises kept the
+  muscle trained, half the cut goes, but the muscle's own rest still counts in full. After a break the
+  weight climbs a step a session back to the old numbers, then normal progression takes over.
 - Comments: `exerciseNotes` holds them, per exercise in a workout or per set through `setId`. Built-in
   tag ids are in src/lib/notes/tags.ts and never change; a user's own tags are in
   `settings.customTags`. A session with an off-day tag doesn't count against an exercise, but a new

@@ -246,6 +246,166 @@ describe('suggestSets', () => {
     expect(long.weightKg).toBe(90);
   });
 
+  describe('how long the break was', () => {
+    const weekly = dates('2026-01-05', 6, 7).map((date) => session(date, [100, 8], [100, 8], [100, 8]));
+    const lastDate = weekly[weekly.length - 1].date;
+    const after = (days: number) => dates(lastDate, 2, days)[1];
+
+    it.each([
+      [14, 95],
+      [21, 90],
+      [59, 90],
+      [60, 85],
+      [179, 85],
+      [180, 75],
+      [365, 75],
+    ])('after %i days, starts from %i', (days, weightKg) => {
+      const s = suggestSets(press, weekly, { today: after(days) })!;
+      expect(s.reason).toBe('afterBreak');
+      expect(s.weightKg).toBe(weightKg);
+      expect(s.reps).toBe(8);
+    });
+
+    it('stretches the longer breaks for an exercise that is rarely done', () => {
+      const monthly = dates('2026-01-05', 6, 28).map((date) => session(date, [100, 8]));
+      const s = suggestSets(press, monthly, { today: dates(monthly[5].date, 2, 60)[1] })!;
+      expect(s.weightKg).toBe(95);
+    });
+
+    it('leaves a usual week alone', () => {
+      expect(suggestSets(press, weekly, { today: after(7) })!.reason).toBe('moreReps');
+    });
+
+    it('stops asking for more once a gap runs long, before any cut', () => {
+      const s = suggestSets(press, weekly, { today: after(11) })!;
+      expect(s.reason).toBe('afterBreakSame');
+      expect(s.weightKg).toBe(100);
+      expect(s.reps).toBe(8);
+    });
+
+    it('keeps the usual sets after a shorter break', () => {
+      const s = suggestSets(press, weekly, { today: after(30) })!;
+      expect(s.sets.filter((x) => x.kind === 'work')).toHaveLength(3);
+      expect(s.params.fewerSets).toBe(false);
+    });
+
+    it('takes a set off the first session after a long break', () => {
+      const s = suggestSets(press, weekly, { today: after(60) })!;
+      expect(s.sets.filter((x) => x.kind === 'work')).toHaveLength(2);
+      expect(s.params.fewerSets).toBe(true);
+    });
+
+    it('never goes below one set', () => {
+      const single = dates('2026-01-05', 6, 7).map((date) => session(date, [100, 8]));
+      const s = suggestSets(press, single, { today: dates(single[5].date, 2, 90)[1] })!;
+      expect(s.sets.filter((x) => x.kind === 'work')).toHaveLength(1);
+      expect(s.params.fewerSets).toBe(false);
+    });
+
+    describe('when other exercises kept the muscle working', () => {
+      it('halves the cut and says why', () => {
+        const today = after(60);
+        const s = suggestSets(press, weekly, { today, keptUntil: dates(today, 2, -3)[1] })!;
+        expect(s.reason).toBe('afterBreak');
+        expect(s.weightKg).toBe(92.5);
+        expect(s.params.keptMuscle).toBe('chest');
+      });
+
+      it('keeps every set, since the muscle is used to the work', () => {
+        const today = after(60);
+        const s = suggestSets(press, weekly, { today, keptUntil: dates(today, 2, -3)[1] })!;
+        expect(s.sets.filter((x) => x.kind === 'work')).toHaveLength(3);
+      });
+
+      it('still cuts for the time the muscle itself has rested', () => {
+        const today = after(90);
+        const s = suggestSets(press, weekly, { today, keptUntil: dates(today, 2, -25)[1] })!;
+        expect(s.weightKg).toBe(90);
+      });
+
+      it('changes nothing with no break', () => {
+        const today = after(7);
+        const s = suggestSets(press, weekly, { today, keptUntil: dates(today, 2, -2)[1] })!;
+        expect(s.reason).toBe('moreReps');
+        expect(s.params.keptMuscle).toBeUndefined();
+      });
+
+      it('does not claim a smaller cut when a gap only holds the numbers', () => {
+        const today = after(11);
+        const s = suggestSets(press, weekly, { today, keptUntil: dates(today, 2, -2)[1] })!;
+        expect(s.reason).toBe('afterBreakSame');
+        expect(s.params.keptMuscle).toBeUndefined();
+      });
+    });
+  });
+
+  describe('climbing back after a break', () => {
+    const before = dates('2026-01-05', 8, 7).map((date) => session(date, [100, 8]));
+    const returned = dates(before[7].date, 2, 21)[1];
+    const backAt = (weightKg: number, reps: number, extra: Partial<Session> = {}) => [...before, { ...session(returned, [weightKg, reps]), ...extra }];
+    const nextWeek = dates(returned, 2, 7)[1];
+
+    it('goes straight back up a step a session at the old reps', () => {
+      const s = suggestSets(press, backAt(90, 8), { today: nextWeek })!;
+      expect(s.reason).toBe('climbBack');
+      expect(s.weightKg).toBe(92.5);
+      expect(s.reps).toBe(8);
+      expect(s.params.before).toEqual({ weightKg: 100, reps: 8 });
+    });
+
+    it('is back at the old numbers in a handful of sessions, then progresses as usual', () => {
+      const history = backAt(90, 8);
+      let today = nextWeek;
+      const plans: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const s = suggestSets(press, history, { today })!;
+        plans.push(`${s.weightKg}x${s.reps} ${s.reason}`);
+        history.push(session(today, [s.weightKg, s.reps]));
+        today = dates(today, 2, 7)[1];
+      }
+      expect(plans).toEqual(['92.5x8 climbBack', '95x8 climbBack', '97.5x8 climbBack', '100x8 climbBack', '100x9 moreReps']);
+    });
+
+    it('lands on the old weight when the step would pass it', () => {
+      const s = suggestSets(press, backAt(99, 8), { today: nextWeek })!;
+      expect(s.weightKg).toBe(100);
+    });
+
+    it('asks for the reps first when the return fell short of them', () => {
+      const s = suggestSets(press, backAt(90, 7), { today: nextWeek })!;
+      expect(s.reason).toBe('moreReps');
+      expect(s.weightKg).toBe(90);
+      expect(s.reps).toBe(8);
+    });
+
+    it('does not climb past a session that already got back', () => {
+      const s = suggestSets(press, backAt(100, 8), { today: nextWeek })!;
+      expect(s.reason).toBe('moreReps');
+    });
+
+    it('does not climb with no break in the history', () => {
+      const s = suggestSets(press, [...before.slice(0, 7), session(before[7].date, [90, 8])], { today: dates(before[7].date, 2, 7)[1] })!;
+      expect(s.reason).toBe('moreReps');
+    });
+
+    it('holds still after pain', () => {
+      const s = suggestSets(press, backAt(90, 8, { pain: true }), { today: nextWeek })!;
+      expect(s.reason).toBe('pain');
+      expect(s.weightKg).toBe(90);
+    });
+
+    it('holds still at a later place in the workout', () => {
+      const s = suggestSets(press, backAt(90, 8), { today: nextWeek, position: 3 })!;
+      expect(s.reason).toBe('laterInWorkout');
+      expect(s.weightKg).toBe(90);
+    });
+
+    it('climbs under a maintain goal too, since that is the level to maintain', () => {
+      const s = suggestSets(press, backAt(90, 8), { today: nextWeek, setting: { exerciseId: 'press', goal: 'maintain' } })!;
+      expect(s.reason).toBe('climbBack');
+    });
+  });
+
   it('does not treat the usual gap of a rotated exercise as a break', () => {
     const history = dates('2025-12-01', 5, 28).map((date) => session(date, [100, 8]));
     const s = suggestSets(press, history, { today: '2026-04-20' })!;
@@ -1286,7 +1446,20 @@ describe('suggestions after a break and in a lighter week', () => {
     it('asks for less time, not more', () => {
       const s = suggestSets(plank, [timed(60)], { today: '2026-06-01' })!;
       expect(s.reason).toBe('afterBreakTime');
-      expect(s.seconds).toBe(55);
+      expect(s.seconds).toBe(50);
+    });
+
+    it('holds the time after a short gap, without asking for more', () => {
+      const s = suggestSets(plank, [timed(60)], { today: dates(last, 2, 11)[1] })!;
+      expect(s.reason).toBe('afterBreakSame');
+      expect(s.seconds).toBe(60);
+    });
+
+    it('takes a set off after a long break, and never the longest', () => {
+      const s = suggestSets(plank, [timed(60, 45, 90)], { today: dates(last, 2, 100)[1] })!;
+      expect(s.params.fewerSets).toBe(true);
+      expect(s.sets).toHaveLength(2);
+      expect(s.sets.map((x) => x.seconds)).toContain(s.seconds);
     });
 
     it('takes at least a time step off, and more from a long hold', () => {

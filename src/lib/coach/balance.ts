@@ -111,6 +111,37 @@ export function bodyLoad(work: { date: string; exerciseId: string }[], workoutDa
   };
 }
 
+/**
+ * The last day other exercises worked what `target` trains, when they did enough since `from` to keep
+ * it trained: what the range calls holding a muscle, per week of that time. A helper counts for part
+ * of a set, as it does on the map.
+ */
+export function keptTrainingUntil(
+  target: Pick<Exercise, 'id' | 'muscle' | 'helpers'>,
+  work: { date: string; exerciseId: string }[],
+  from: string,
+  today: string,
+  exercises: Map<string, Exercise>,
+): string | undefined {
+  const { main } = regionsOf(target);
+  const days = daysBetween(from, today);
+  if (!main.length || days <= 0) return undefined;
+  const hits = (regions: BodyRegion[]) => regions.some((region) => main.includes(region));
+  let sets = 0;
+  let latest: string | undefined;
+  for (const { date, exerciseId } of work) {
+    const exercise = exercises.get(exerciseId);
+    if (!exercise || exerciseId === target.id || date <= from || date > today) continue;
+    const regions = regionsOf(exercise);
+    const weight = hits(regions.main) ? 1 : hits(regions.helpers) ? HELPER_WEIGHT : 0;
+    if (!weight) continue;
+    sets += weight;
+    if (!latest || date > latest) latest = date;
+  }
+  const needed = Math.max(...main.map((region) => regionRange(region, 'maintain').low));
+  return (sets * DAYS_IN_WEEK) / days >= needed ? latest : undefined;
+}
+
 export function hasEnoughHistory(load: BodyLoad): boolean {
   return load.weeks >= MIN_WEEKS;
 }

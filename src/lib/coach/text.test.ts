@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { setUiLang } from '../i18n.svelte';
+import { setUiLang, t } from '../i18n.svelte';
 import type { Exercise } from '../types';
 import type { ExerciseStatus } from './status';
 import type { Session } from './strength';
@@ -57,6 +57,26 @@ describe('reason text', () => {
       setUiLang(lang);
       const params = { ...fromEarlier().params, days: 40, baseDate: on('03-02') };
       expect(reasonText({ ...fromEarlier(), reason, params })).toContain(MARCH[lang]);
+    });
+
+    it('says where a climb back is heading, with the date when built on an earlier session', () => {
+      setUiLang(lang);
+      const s = fromEarlier();
+      const params = { ...s.params, before: { weightKg: 100, reps: 8 } };
+      const climb = { ...s, reason: 'climbBack' as const, params };
+      expect(reasonText(climb)).toContain('100');
+      expect(reasonText(climb)).toContain(MARCH[lang]);
+      expect(reasonText({ ...climb, params: { ...params, baseDate: undefined } })).not.toContain(MARCH[lang]);
+    });
+
+    it('adds what else a break changed as sentences of their own', () => {
+      setUiLang(lang);
+      const s = { ...fromEarlier(), reason: 'afterBreak' as const };
+      const plain = reasonText(s);
+      const full = reasonText({ ...s, params: { ...s.params, keptMuscle: 'chest' as const, fewerSets: true } });
+      expect(full.startsWith(`${plain} `)).toBe(true);
+      expect(full).toContain(t('exercises.muscle.chest'));
+      expect(full.endsWith(t('coach.reason.fewerSets'))).toBe(true);
     });
 
     it('names the date when holding to a maintain goal', () => {

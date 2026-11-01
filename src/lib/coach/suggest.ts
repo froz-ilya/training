@@ -35,6 +35,7 @@ export type ReasonCode =
   | 'afterBreakReps'
   | 'afterBreakTime'
   | 'afterBreakSame'
+  | 'climbBack'
   | 'maintain'
   | 'noIncrease'
   | 'lighterWeek'
@@ -63,6 +64,12 @@ export interface Suggestion {
     baseDate?: string;
     /** The muscle with more earlier work today, for the 'earlierWork' reason. */
     muscle?: Muscle;
+    /** The muscle other exercises kept working during a break, which made the cut smaller. */
+    keptMuscle?: Muscle;
+    /** The numbers from before a break, for the 'climbBack' reason. */
+    before?: { weightKg: number; reps: number };
+    /** A long break takes one work set off the first session back. */
+    fewerSets?: boolean;
   };
 }
 
@@ -80,17 +87,37 @@ export interface SuggestOptions {
   positionCost?: number;
   /** Days a rotation normally takes at the user's weekly frequency. */
   expectedGapDays?: number;
+  /** The last day other exercises worked this muscle, when they kept it trained during a break. */
+  keptUntil?: string;
   /** Used to compare bodyweight sets. */
   body?: number;
 }
 
-const BREAK_SHORT_DAYS = 14;
-const BREAK_LONG_DAYS = 21;
-/** A break also has to be this many times the exercise's usual gap. */
-const BREAK_SHORT_GAPS = 1.5;
-const BREAK_LONG_GAPS = 2.25;
-const BREAK_SHORT = 0.95;
-const BREAK_LONG = 0.9;
+interface BreakTier {
+  days: number;
+  /** A break also has to be this many times the exercise's usual gap. */
+  gaps: number;
+  /** What's kept of the last numbers. At 1 they stay, without an increase. */
+  share: number;
+}
+
+/** Below this, an exercise hasn't been away for long enough to count as any kind of break. */
+export const BREAK_MIN_DAYS = 10;
+const SHORT_BREAK: BreakTier = { days: 14, gaps: 1.5, share: 0.95 };
+/** Starting values, longest first: strength holds for a couple of weeks, then fades slowly. */
+const BREAKS: BreakTier[] = [
+  { days: 180, gaps: 8, share: 0.75 },
+  { days: 60, gaps: 4, share: 0.85 },
+  { days: 21, gaps: 2.25, share: 0.9 },
+  SHORT_BREAK,
+  { days: BREAK_MIN_DAYS, gaps: 1.5, share: 1 },
+];
+/** The part of the cut that stays when other exercises kept the muscle working: the movement is still out of practice. */
+const KEPT_CUT = 0.5;
+/** A cut this big or bigger takes a set off the first session back, because soreness comes from volume too. */
+const FEWER_SETS_SHARE = 0.85;
+/** Sessions after a break that can still be climbing back to the numbers from before it. */
+const CLIMB_SESSIONS = 16;
 const LIGHTER_WEEK = 0.9;
 /** Warm-ups stay as last time while the top weight is within this share of last time's. */
 const SIMILAR_TOP = 0.15;
@@ -115,6 +142,35 @@ const FATIGUE_DROP = 0.05;
 const DEFAULT_WORK_SETS = 3;
 /** Sessions the usual number of work sets comes from. */
 const USUAL_SETS_SESSIONS = 6;
+
+const breakLength = (tier: BreakTier, gap: number) => Math.max(tier.days, tier.gaps * gap);
+
+/** What's kept of the last numbers after `days` away, or null when that's no break. */
+function breakShare(days: number, gap: number): number | null {
+  return BREAKS.find((tier) => days >= breakLength(tier, gap))?.share ?? null;
+}
+
+/** The muscle's own rest counts in full; the rest of the exercise's break counts for part of its cut. */
+function keptShare(share: number, restDays: number, gap: number): number {
+  return Math.min(breakShare(restDays, gap) ?? 1, 1 - (1 - share) * KEPT_CUT);
+}
+
+/** The lead set from before the latest break, until a session since then has got back to its weight. */
+function beforeBreak(history: Session[], counted: Session[], breakDays: number): SessionSet | null {
+  const oldest = Math.max(1, history.length - CLIMB_SESSIONS);
+  for (let i = history.length - 1; i >= oldest; i--) {
+    const returned = history[i].date;
+    if (daysBetween(history[i - 1].date, returned) < breakDays) continue;
+    const earlier = counted.filter((s) => s.date < returned);
+    const before = earlier.length ? leadSet(earlier[earlier.length - 1]) : null;
+    const reached = before && counted.some((s) => s.date >= returned && (leadSet(s)?.weightKg ?? 0) >= before.weightKg);
+    return reached ? null : before;
+  }
+  return null;
+}
+
+/** Reasons that ask for more than last time, which pain or a later slot then hold back. */
+const asksForMore = (reason: ReasonCode) => reason === 'up' || reason === 'moreReps' || reason === 'hold' || reason === 'climbBack';
 
 /** A plan stays at the height the set was done at, and adds nothing when it has none. */
 const atLevel = (level: number | undefined) => (level === undefined ? {} : { level });
@@ -145,6 +201,7 @@ function stepsFrom(anchor: number, target: number, step: number): number {
  * no weight to take off. `repDrop` is what later sets at that weight lose too.
  */
 function eased(top: SessionSet, share: number, step: number): { weightKg: number; reps: number; repDrop: number } {
+  if (share >= 1) return { weightKg: top.weightKg, reps: top.reps, repDrop: 0 };
   const weightKg = stepsFrom(top.weightKg, top.weightKg * share, step);
   if (weightKg < top.weightKg) return { weightKg, reps: top.reps, repDrop: 0 };
   const repDrop = Math.max(1, Math.round(top.reps * (1 - share)));
@@ -154,6 +211,7 @@ function eased(top: SessionSet, share: number, step: number): { weightKg: number
 
 /** About `share` of a duration, at least one time step shorter; unchanged when that leaves nothing. */
 function easedSeconds(seconds: number, share: number): number {
+  if (share >= 1) return seconds;
   const target = Math.min(stepsFrom(seconds, seconds * share, TIME_STEP_SECONDS), seconds - TIME_STEP_SECONDS);
   return target > 0 ? target : seconds;
 }
@@ -210,14 +268,16 @@ function workPlan(
 function timedSuggestion(last: Session, top: SessionSet, reason: ReasonCode, params: Suggestion['params']): Suggestion {
   const seconds = params.target;
   const shorter = seconds < (top.seconds ?? 0);
-  const sets = doneWork(last).map((set) => ({
+  const done = doneWork(last);
+  const dropped = params.fewerSets ? [...done].reverse().find((set) => set !== top) : undefined;
+  const sets = done.filter((set) => set !== dropped).map((set) => ({
     kind: 'work' as const,
     weightKg: set.weightKg,
     reps: 0,
     seconds: set === top || (shorter && (set.seconds ?? 0) > seconds) ? seconds : set.seconds,
     ...carried(set),
   }));
-  return { weightKg: top.weightKg, reps: 0, seconds, sets, reason, params };
+  return { weightKg: top.weightKg, reps: 0, seconds, sets, reason, params: { ...params, fewerSets: !!dropped } };
 }
 
 /**
@@ -225,7 +285,7 @@ function timedSuggestion(last: Session, top: SessionSet, reason: ReasonCode, par
  * nothing to go on, and a guessed weight for someone's first session wouldn't be safe.
  */
 export function suggestSets(exercise: Exercise, history: Session[], options: SuggestOptions): Suggestion | null {
-  const { today, setting, status, lighterWeek, position, priorWork, positionCost = DEFAULT_POSITION_COST, expectedGapDays = 0, body } = options;
+  const { today, setting, status, lighterWeek, position, priorWork, positionCost = DEFAULT_POSITION_COST, expectedGapDays = 0, keptUntil, body } = options;
   // An off day says nothing about the next session, so it's never the starting point.
   const counted = countedSessions(history, exercise.load, bodyKg(body));
   const last = baseSession(counted, position);
@@ -247,17 +307,19 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
   const step = weightStep(exercise, history, setting);
   const lastSeconds = top.seconds ?? 0;
   const baseDate = last === latest ? undefined : last.date;
-  const params = { weightKg: top.weightKg, reps: top.reps, seconds: lastSeconds, target: top.reps, low, high, days, load: exercise.load, baseDate };
   const gap = Math.max(typicalGap(history.map((s) => s.date)), expectedGapDays);
-  const shortBreak = Math.max(BREAK_SHORT_DAYS, BREAK_SHORT_GAPS * gap);
-  const longBreak = Math.max(BREAK_LONG_DAYS, BREAK_LONG_GAPS * gap);
-  const breakShare = days >= longBreak ? BREAK_LONG : days >= shortBreak ? BREAK_SHORT : null;
+  const ownShare = breakShare(days, gap);
+  const share = ownShare !== null && keptUntil ? keptShare(ownShare, daysBetween(keptUntil, today), gap) : ownShare;
+  const keptMuscle = share !== null && ownShare !== null && share > ownShare ? exercise.muscle : undefined;
+  const fewerSets = !lighterWeek && share !== null && share <= FEWER_SETS_SHARE;
+  const base = { weightKg: top.weightKg, reps: top.reps, seconds: lastSeconds, target: top.reps, low, high, days, load: exercise.load, baseDate };
+  const params = share === null || lighterWeek ? base : { ...base, keptMuscle };
 
   if (exercise.load === 'time') {
     if (lighterWeek) return timedSuggestion(last, top, 'lighterWeek', { ...params, target: easedSeconds(lastSeconds, LIGHTER_WEEK) });
-    if (breakShare !== null) {
-      const target = easedSeconds(lastSeconds, breakShare);
-      return timedSuggestion(last, top, target < lastSeconds ? 'afterBreakTime' : 'afterBreakSame', { ...params, target });
+    if (share !== null) {
+      const target = easedSeconds(lastSeconds, share);
+      return timedSuggestion(last, top, target < lastSeconds ? 'afterBreakTime' : 'afterBreakSame', { ...params, target, fewerSets });
     }
     const hold = setting?.goal === 'maintain';
     if (hold || latest.pain || slots > 0) {
@@ -269,6 +331,7 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
   }
 
   const noIncrease = status?.state === 'stalled' || status?.state === 'dropping';
+  const before = beforeBreak(history, counted, breakLength(SHORT_BREAK, gap));
   let weightKg = top.weightKg;
   let reps = top.reps;
   let repDrop = 0;
@@ -277,9 +340,14 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
   if (lighterWeek) {
     ({ weightKg, reps, repDrop } = eased(top, LIGHTER_WEEK, step));
     reason = 'lighterWeek';
-  } else if (breakShare !== null) {
-    ({ weightKg, reps, repDrop } = eased(top, breakShare, step));
+  } else if (share !== null) {
+    ({ weightKg, reps, repDrop } = eased(top, share, step));
     reason = weightKg < top.weightKg ? 'afterBreak' : reps < top.reps ? 'afterBreakReps' : 'afterBreakSame';
+  } else if (before && top.weightKg < before.weightKg && top.reps >= before.reps) {
+    // Lost strength comes back faster than it was built: straight back up, a step a session, at the old reps.
+    weightKg = Math.min(top.weightKg + step, before.weightKg);
+    reps = before.reps;
+    reason = 'climbBack';
   } else if (setting?.goal === 'maintain') {
     reason = 'maintain';
   } else if (top.reps >= high) {
@@ -312,19 +380,19 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
   }
 
   // Pain last time: the same numbers at most, whatever the rules above would add.
-  if (latest.pain && (reason === 'up' || reason === 'moreReps' || reason === 'hold' || reason === 'noIncrease')) {
+  if (latest.pain && (asksForMore(reason) || reason === 'noIncrease')) {
     weightKg = top.weightKg;
     reps = top.reps;
     reason = 'pain';
   }
 
   // A later slot explains fewer reps, and a good session from an earlier slot is no reason to push.
-  if (slots > 0 && (reason === 'up' || reason === 'moreReps' || reason === 'hold')) {
+  if (slots > 0 && asksForMore(reason)) {
     repDrop = Math.min(slots, MAX_LATER_DROP);
     weightKg = top.weightKg;
     reps = Math.max(1, top.reps - repDrop);
     reason = 'laterInWorkout';
-  } else if (moreWork && (reason === 'up' || reason === 'moreReps' || reason === 'hold')) {
+  } else if (moreWork && asksForMore(reason)) {
     // Never on top of the later slot above, and never a lighter weight: the same numbers, at most a rep fewer.
     repDrop = extraLoss >= FATIGUE_DROP ? 1 : 0;
     weightKg = top.weightKg;
@@ -334,8 +402,10 @@ export function suggestSets(exercise: Exercise, history: Session[], options: Sug
     reason = 'earlierInWorkout';
   }
 
-  const work = workPlan(last, top, weightKg, reps, step, repDrop, usualWorkSets(history));
+  const usual = usualWorkSets(history);
+  const work = workPlan(last, top, weightKg, reps, step, repDrop, fewerSets ? Math.max(1, usual - 1) : usual);
   const warm = warmUps(last, weightKg, top.weightKg, step, exercise.compound, top.level);
   const muscle = reason === 'earlierWork' ? { muscle: priorWork?.muscle } : {};
-  return { weightKg, reps, sets: [...warm, ...work], reason, params: { ...params, target: reps, ...muscle } };
+  const climbing = reason === 'climbBack' && before ? { before: { weightKg: before.weightKg, reps: before.reps } } : {};
+  return { weightKg, reps, sets: [...warm, ...work], reason, params: { ...params, target: reps, ...muscle, ...climbing, fewerSets: work.length < usual } };
 }

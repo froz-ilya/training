@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CATALOG } from '../catalog/exercises';
 import type { BodyRegion, Exercise } from '../types';
-import { bodyLoad, hasEnoughHistory, regionRange, regionStatus, type BodyLoad } from './balance';
+import { bodyLoad, hasEnoughHistory, keptTrainingUntil, regionRange, regionStatus, type BodyLoad } from './balance';
 
 const TODAY = '2026-03-29';
 /** A date that many whole weeks back from today, up to 4. */
@@ -12,6 +12,45 @@ const sets = (exerciseId: string, count: number, date: string) => Array.from({ l
 
 const perWeek = (load: BodyLoad, region: BodyRegion) => load.regions.find((r) => r.region === region)!.perWeek;
 const shares = (load: BodyLoad, region: BodyRegion) => load.regions.find((r) => r.region === region)!.shares;
+
+describe('keptTrainingUntil', () => {
+  const bench = exercises.get('barbell-bench-press')!;
+  const from = weeksAgo(4);
+  const weekly = (exerciseId: string, count: number) => [3, 2, 1, 0].flatMap((weeks) => sets(exerciseId, count, weeksAgo(weeks)));
+
+  it('finds the last day a similar exercise worked the same muscle', () => {
+    expect(keptTrainingUntil(bench, weekly('pec-deck', 3), from, TODAY, exercises)).toBe(TODAY);
+  });
+
+  it('ignores the exercise itself', () => {
+    expect(keptTrainingUntil(bench, weekly('barbell-bench-press', 3), from, TODAY, exercises)).toBeUndefined();
+  });
+
+  it('ignores exercises for other muscles', () => {
+    expect(keptTrainingUntil(bench, weekly('lat-pulldown', 6), from, TODAY, exercises)).toBeUndefined();
+  });
+
+  it('needs enough work to hold the muscle, not one stray set', () => {
+    expect(keptTrainingUntil(bench, sets('pec-deck', 3, weeksAgo(0)), from, TODAY, exercises)).toBeUndefined();
+  });
+
+  it('counts a helper for half a set', () => {
+    const helper = bench;
+    const triceps = { ...helper, id: 'custom-push', muscle: 'triceps' as const, helpers: undefined };
+    expect(keptTrainingUntil(triceps, weekly('barbell-bench-press', 3), from, TODAY, exercises)).toBe(undefined);
+    expect(keptTrainingUntil(triceps, weekly('barbell-bench-press', 4), from, TODAY, exercises)).toBe(TODAY);
+  });
+
+  it('leaves out work before the break began and after today', () => {
+    const work = [...sets('pec-deck', 40, from), ...sets('pec-deck', 40, '2026-04-01')];
+    expect(keptTrainingUntil(bench, work, from, TODAY, exercises)).toBeUndefined();
+  });
+
+  it('has nothing to say for an exercise with no regions', () => {
+    const cardio = { ...bench, id: 'custom-run', muscle: 'cardio' as const };
+    expect(keptTrainingUntil(cardio, weekly('pec-deck', 6), from, TODAY, exercises)).toBeUndefined();
+  });
+});
 
 describe('bodyLoad', () => {
   it('counts a set in full for the main region and as half for a helper', () => {

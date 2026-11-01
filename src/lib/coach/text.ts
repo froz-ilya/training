@@ -61,8 +61,8 @@ function earlierWorkReason(muscle: Muscle, fewerReps: boolean, date: string | un
  * Why this suggestion, in a sentence. "Last time" is only said of the latest session: one built on
  * an earlier session names its date.
  */
-export function reasonText(s: Suggestion): string {
-  const { weightKg, reps, seconds, target, low, high, days, load, baseDate } = s.params;
+function mainReason(s: Suggestion): string {
+  const { weightKg, reps, seconds, target, low, high, days, load, baseDate, before } = s.params;
   const last = fmtSet({ weightKg, reps, seconds }, load);
   const date = baseDate && dayInText(baseDate);
   const timed = load === 'time' || (seconds > 0 && !reps);
@@ -95,6 +95,10 @@ export function reasonText(s: Suggestion): string {
       return date
         ? t('coach.reason.afterBreakSame.dated', { days: tn('common.days', days), date })
         : t('coach.reason.afterBreakSame', { days: tn('common.days', days) });
+    case 'climbBack': {
+      const old = fmtSet({ ...before!, seconds: 0 }, load);
+      return date ? t('coach.reason.climbBack.dated', { last, before: old, date }) : t('coach.reason.climbBack', { last, before: old });
+    }
     case 'maintain':
       return date ? t('coach.reason.maintain.dated', { date }) : t('coach.reason.maintain');
     case 'noIncrease':
@@ -111,6 +115,13 @@ export function reasonText(s: Suggestion): string {
     case 'earlierWork':
       return earlierWorkReason(s.params.muscle!, !timed && target < reps, date);
   }
+}
+
+/** The reason, and what else a break changed. These are whole sentences of their own. */
+export function reasonText(s: Suggestion): string {
+  const { keptMuscle, fewerSets } = s.params;
+  const kept = keptMuscle && t('coach.reason.kept', { muscle: t(`exercises.muscle.${keptMuscle}`) });
+  return [mainReason(s), kept, fewerSets && t('coach.reason.fewerSets')].filter(Boolean).join(' ');
 }
 
 export function actionLabel(action: StallAction): string {

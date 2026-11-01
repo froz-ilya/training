@@ -1,12 +1,12 @@
 import { CATALOG, catalogExercise } from '../catalog/exercises';
 import { groupOf, mainGroups, type MuscleGroup } from '../catalog/groups';
-import { toISODate } from '../dates';
+import { daysBetween, toISODate } from '../dates';
 import { effectiveHistory } from '../db/repo';
 import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
 import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
-import { bodyLoad, type BodyLoad } from './balance';
+import { bodyLoad, keptTrainingUntil, type BodyLoad } from './balance';
 import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
 import { planNextType, rotationTypeCount, typeGroups, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
@@ -16,7 +16,7 @@ import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
 import { exerciseStatus, type ExerciseStatus } from './status';
 import { atLatestLevel, bodyKg, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
-import { suggestSets, type SetPlan, type Suggestion } from './suggest';
+import { BREAK_MIN_DAYS, suggestSets, type SetPlan, type Suggestion } from './suggest';
 import { calendarWeeks, newBests, weeklyVolume, type CalendarDay, type NewBest, type WeekVolume } from './summary';
 
 /** Everything the coach knows about one exercise. */
@@ -100,12 +100,24 @@ function toSessions(sets: WorkoutSet[], ranks: Ranks, notes?: NoteIndex, around?
   return markHeldBack([...sessions.values()]);
 }
 
+/** Finished work on every exercise, to see what a muscle did while one of them was away. */
+interface Elsewhere {
+  work: WorkoutSet[];
+  exercises: Map<string, Exercise>;
+}
+
+const elsewhere = (sets: WorkoutSet[], exercises: Map<string, Exercise>): Elsewhere => ({
+  work: sets.filter((s) => s.kind === 'work' && isMeasured(s)),
+  exercises,
+});
+
 function buildView(
   exercise: Exercise,
   sessions: Session[],
   stored: Stored,
   today: string,
   training: Training,
+  others: Elsewhere,
   position?: number,
   prior?: PriorWork | null,
 ): ExerciseView {
@@ -119,6 +131,8 @@ function buildView(
   const { positionCost, perWeek, expectedGapDays } = training;
   const restartedOn = restartDate(sessions, baselines);
   const status = exerciseStatus(points, { today, goal: setting?.goal, ignoreFall, positionCost, expectedGapDays, restartedOn });
+  const latest = compared[compared.length - 1];
+  const keptUntil = latest && keptTrainingUntil(exercise, others.work, latest.date, today, others.exercises);
   const suggestion = suggestSets(exercise, compared, {
     today,
     setting,
@@ -128,6 +142,7 @@ function buildView(
     priorWork: prior,
     positionCost,
     expectedGapDays,
+    keptUntil,
     body,
   });
   return { exercise, sessions, compared, points, setting, baselines, records, status, suggestion, perWeek, expectedGapDays };
@@ -274,7 +289,12 @@ export async function loadExerciseView(id: string, position?: number): Promise<E
   const surroundings = { perWorkout: group(around, (s) => s.workoutId), exercises, body: bodyKg(settings.bodyWeightKg) };
   const sessions = toSessions(own, entryRanks(around), noteIndex(notes), surroundings);
   const prior = position === undefined ? null : await plannedPriorWork(exercise, position, exercises);
-  return buildView(exercise, sessions, stored, toISODate(), training, position, prior);
+  const today = toISODate();
+  const latest = sessions[sessions.length - 1];
+  // Reading everything is only worth it when this exercise has been away.
+  const away = !!latest && daysBetween(latest.date, today) >= BREAK_MIN_DAYS;
+  const others = elsewhere(away ? (await finishedSets()).sets : [], exercises);
+  return buildView(exercise, sessions, stored, today, training, others, position, prior);
 }
 
 export interface ProgressData {
@@ -306,10 +326,11 @@ export async function loadProgress(): Promise<ProgressData> {
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
   const around = { perWorkout: group(sets, (s) => s.workoutId), exercises, body };
+  const others = elsewhere(sets, exercises);
   const views: ExerciseView[] = [];
   for (const [id, rows] of group(sets, (s) => s.exerciseId)) {
     const exercise = exercises.get(id);
-    if (exercise) views.push(buildView(exercise, toSessions(rows, ranks, noted, around), stored, today, training));
+    if (exercise) views.push(buildView(exercise, toSessions(rows, ranks, noted, around), stored, today, training, others));
   }
   const allBests = views
     .flatMap((v) => newBests(v.compared, v.exercise.load, body).map((b) => ({ ...b, exercise: v.exercise })))
@@ -389,6 +410,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const perExercise = group(sets, (s) => s.exerciseId);
   const body = bodyKg(settings.bodyWeightKg);
   const around = { perWorkout: group(sets, (s) => s.workoutId), exercises, body };
+  const others = elsewhere(sets, exercises);
   const list: NextWorkout['exercises'] = [];
   const planned: WorkoutRow[] = [];
   for (const id of plan.exerciseIds) {
@@ -396,7 +418,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
     if (!exercise) continue;
     const position = list.length + 1;
     const prior = priorWork(exercise, planned, position, exercises, body);
-    const view = buildView(exercise, toSessions(perExercise.get(id) ?? [], ranks, noted, around), stored, today, training, position, prior);
+    const view = buildView(exercise, toSessions(perExercise.get(id) ?? [], ranks, noted, around), stored, today, training, others, position, prior);
     const sets = view.suggestion?.sets ?? [];
     list.push({ exercise, sets, suggestion: view.suggestion });
     planned.push(...sets.map((set) => ({ ...set, exerciseId: id, entry: position })));

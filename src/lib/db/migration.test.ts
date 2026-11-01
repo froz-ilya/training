@@ -135,6 +135,15 @@ describe('database versions', () => {
     db.close();
   });
 
+  it('reads v1 settings with no region goals', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { loadSettings, settings } = await import('../settings.svelte');
+    await loadSettings();
+    expect(settings.regionGoals).toEqual({});
+    db.close();
+  });
+
   it('restores a v1 backup with everything in it', async () => {
     await seedV1();
     const db = await openCurrent();

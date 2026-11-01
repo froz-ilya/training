@@ -2,6 +2,7 @@
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
+  import BodyBalance from '../components/progress/BodyBalance.svelte';
   import ExerciseStatusList from '../components/progress/ExerciseStatusList.svelte';
   import TrainingCalendar from '../components/progress/TrainingCalendar.svelte';
   import TrendPill from '../components/progress/TrendPill.svelte';
@@ -68,6 +69,11 @@
   {:else}
     <div class="content-in">
       <div class="section first">
+        <div class="section-title">{t('progress.body')}</div>
+        <BodyBalance load={data.value.body} />
+      </div>
+
+      <div class="section">
         <div class="section-title">{t('progress.overview')}</div>
         <div class="tiles">
           {#each tiles as tile (tile.label)}

@@ -1,5 +1,5 @@
 import { db } from './db/schema';
-import type { CustomTag, Settings, ThemeSetting, UiLangSetting } from './types';
+import type { CustomTag, RegionGoal, Settings, ThemeSetting, UiLangSetting } from './types';
 
 export const defaultSettings: Settings = {
   id: 'main',
@@ -9,6 +9,7 @@ export const defaultSettings: Settings = {
   bodyWeightKg: 0,
   workoutsPerWeek: 0,
   customTags: [],
+  regionGoals: {},
   backupEvery: 14,
   lastBackupAt: 0,
   backupSnoozeUntil: 0,
@@ -18,6 +19,7 @@ export const settings = $state<Settings>({ ...defaultSettings });
 
 const LANGUAGES: UiLangSetting[] = ['auto', 'en', 'de', 'ru'];
 const THEMES: ThemeSetting[] = ['auto', 'light', 'dark'];
+const REGION_GOALS: RegionGoal[] = ['focus', 'maintain', 'ignore'];
 
 const count = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -27,6 +29,12 @@ function normalizeTags(value: unknown): CustomTag[] {
   if (!Array.isArray(value)) return [];
   const tags = value.filter((tag) => typeof tag?.id === 'string' && tag.id && typeof tag?.label === 'string' && tag.label.trim());
   return tags.map((tag) => ({ id: tag.id, label: tag.label, offDay: tag.offDay === true }));
+}
+
+/** Goals that can't be read are dropped. A region this code doesn't know keeps its goal. */
+function normalizeRegionGoals(value: unknown): Settings['regionGoals'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, goal]) => REGION_GOALS.includes(goal)));
 }
 
 /**
@@ -43,6 +51,7 @@ export function normalizeSettings(saved: Partial<Settings> | null | undefined): 
     bodyWeightKg: count(merged.bodyWeightKg, defaultSettings.bodyWeightKg),
     workoutsPerWeek: Math.min(7, Math.round(count(merged.workoutsPerWeek, defaultSettings.workoutsPerWeek))),
     customTags: normalizeTags(merged.customTags),
+    regionGoals: normalizeRegionGoals(merged.regionGoals),
     backupEvery: count(merged.backupEvery, defaultSettings.backupEvery),
     lastBackupAt: count(merged.lastBackupAt, defaultSettings.lastBackupAt),
     backupSnoozeUntil: count(merged.backupSnoozeUntil, defaultSettings.backupSnoozeUntil),

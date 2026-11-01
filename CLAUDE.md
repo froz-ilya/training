@@ -80,6 +80,9 @@ migration that is tested.
   through the same `normalizeTables()`.
 - Exercises: src/lib/catalog/exercises.ts holds the catalogue. A user's own exercises get a
   `custom-` id. Names always go through `nameOf()` (src/lib/exercises.svelte.ts), never a stored name.
+  A new catalogue exercise also needs its body regions in src/lib/catalog/regions.ts.
+- The body map on Progress shows training, never muscle size: work sets a week per region against a
+  general range (src/lib/coach/balance.ts). Goals per region are in `settings.regionGoals`.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
   stored, so they follow the interface language.

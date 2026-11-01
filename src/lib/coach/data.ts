@@ -6,6 +6,7 @@ import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
 import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
+import { bodyLoad, type BodyLoad } from './balance';
 import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
 import { planNextType, rotationTypeCount, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
@@ -14,7 +15,7 @@ import { countRecent, groupSummaries, type GroupSummary, type Overview } from '.
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
 import { exerciseStatus, type ExerciseStatus } from './status';
-import { atLatestLevel, bodyKg, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
+import { atLatestLevel, bodyKg, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
 import { suggestSets, type SetPlan, type Suggestion } from './suggest';
 import { calendarWeeks, newBests, weeklyVolume, type CalendarDay, type NewBest, type WeekVolume } from './summary';
 
@@ -281,6 +282,7 @@ export interface ProgressData {
   bests: (NewBest & { exercise: Exercise })[];
   overview: Overview;
   groups: GroupSummary[];
+  body: BodyLoad;
   weeks: WeekVolume[];
   calendar: CalendarDay[][];
   workouts: number;
@@ -330,6 +332,7 @@ export async function loadProgress(): Promise<ProgressData> {
       bests: countRecent(allBests, today),
     },
     groups: groupSummaries(views, grouped, today),
+    body: bodyLoad(work.filter(isMeasured), [...workouts.values()].map((w) => w.date), exercises, today),
     weeks: weeklyVolume(entries, today, WEEKS_OF_VOLUME),
     calendar,
     workouts: workouts.size,

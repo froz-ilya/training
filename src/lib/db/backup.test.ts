@@ -294,6 +294,23 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings(older).workoutsPerWeek).toBe(0);
   });
 
+  it('reads settings saved before regionGoals existed as no goals', () => {
+    const { regionGoals: _, ...older } = defaultSettings;
+    expect(normalizeSettings(older).regionGoals).toEqual({});
+  });
+
+  it('drops region goals it can’t read and keeps the rest', () => {
+    const saved = { chest: 'focus', calves: 'ignore', lats: 'bulk', quads: 3 };
+    expect(normalizeSettings({ regionGoals: saved as never }).regionGoals).toEqual({ chest: 'focus', calves: 'ignore' });
+    expect(normalizeSettings({ regionGoals: 'x' as never }).regionGoals).toEqual({});
+    expect(normalizeSettings({ regionGoals: ['focus'] as never }).regionGoals).toEqual({});
+  });
+
+  it('keeps the goal of a region this version doesn’t know', () => {
+    const later = { neck: 'focus' } as Settings['regionGoals'];
+    expect(normalizeSettings({ regionGoals: later }).regionGoals).toEqual(later);
+  });
+
   it('keeps workoutsPerWeek within a week', () => {
     expect(normalizeSettings({ workoutsPerWeek: 3 }).workoutsPerWeek).toBe(3);
     expect(normalizeSettings({ workoutsPerWeek: 12 }).workoutsPerWeek).toBe(7);

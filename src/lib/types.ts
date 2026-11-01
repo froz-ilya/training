@@ -15,6 +15,8 @@ export interface Settings {
   workoutsPerWeek: number;
   /** Tags the user added for comments; built-in ones aren't stored here. */
   customTags: CustomTag[];
+  /** What the user wants from a body region; one with no entry follows the usual range. */
+  regionGoals: Partial<Record<BodyRegion, RegionGoal>>;
   backupEvery: number;
   lastBackupAt: number;
   backupSnoozeUntil: number;
@@ -40,6 +42,26 @@ export type Muscle =
   | 'abs'
   | 'cardio'
   | 'fullBody';
+
+/** The parts of the body map: finer than `Muscle`, whose back, legs and shoulders each cover several. */
+export type BodyRegion =
+  | 'chest'
+  | 'frontDelts'
+  | 'sideDelts'
+  | 'rearDelts'
+  | 'upperBack'
+  | 'lats'
+  | 'lowerBack'
+  | 'biceps'
+  | 'triceps'
+  | 'forearms'
+  | 'abs'
+  | 'glutes'
+  | 'quads'
+  | 'hamstrings'
+  | 'calves';
+
+export type RegionGoal = 'focus' | 'maintain' | 'ignore';
 
 export type Equipment = 'barbell' | 'dumbbell' | 'machine' | 'cable' | 'smith' | 'bodyweight' | 'other';
 

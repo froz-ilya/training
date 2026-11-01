@@ -66,90 +66,92 @@
       <a class="btn" href="#/import">{t('progress.emptyAction')}</a>
     </div>
   {:else}
-    <div class="section first">
-      <div class="section-title">{t('progress.overview')}</div>
-      <div class="tiles">
-        {#each tiles as tile (tile.label)}
-          <div class="card tile">
-            <b>{fmtNumber(tile.count.current)}</b>
-            <span class="name">{tile.label}</span>
-            <span class="delta">{change(tile.count)}</span>
-          </div>
-        {/each}
+    <div class="content-in">
+      <div class="section first">
+        <div class="section-title">{t('progress.overview')}</div>
+        <div class="tiles">
+          {#each tiles as tile (tile.label)}
+            <div class="card tile">
+              <b>{fmtNumber(tile.count.current)}</b>
+              <span class="name">{tile.label}</span>
+              <span class="delta">{change(tile.count)}</span>
+            </div>
+          {/each}
+        </div>
+        <p class="muted small note">{t('progress.overviewNote')}</p>
       </div>
-      <p class="muted small note">{t('progress.overviewNote')}</p>
-    </div>
 
-    {#if data.value.groups.length}
-      <div class="section">
-        <div class="section-title">{t('progress.groups')}</div>
-        <div class="list">
-          {#each data.value.groups as row (row.group)}
-            <a class="list-item group-row" href="#/group/{row.group}">
-              <span class="body">
-                <span class="head">
-                  <span class="title">{t(`exercises.group.${row.group}`)}</span>
-                  {#if row.trend !== null}<TrendPill change={row.trend} />{/if}
+      {#if data.value.groups.length}
+        <div class="section">
+          <div class="section-title">{t('progress.groups')}</div>
+          <div class="list">
+            {#each data.value.groups as row (row.group)}
+              <a class="list-item group-row" href="#/group/{row.group}">
+                <span class="body">
+                  <span class="head">
+                    <span class="title">{t(`exercises.group.${row.group}`)}</span>
+                    {#if row.trend !== null}<TrendPill change={row.trend} />{/if}
+                  </span>
+                  <span class="bar" aria-hidden="true"><i style:width="{(row.recentSets / mostSets) * 100}%"></i></span>
+                  <span class="sub">{lastTrained(row.lastDate)} · {tn('common.sets', row.recentSets)}</span>
                 </span>
-                <span class="bar" aria-hidden="true"><i style:width="{(row.recentSets / mostSets) * 100}%"></i></span>
-                <span class="sub">{lastTrained(row.lastDate)} · {tn('common.sets', row.recentSets)}</span>
-              </span>
-              <span class="go"><Icon name="chevron" size={16} /></span>
-            </a>
-          {/each}
+                <span class="go"><Icon name="chevron" size={16} /></span>
+              </a>
+            {/each}
+          </div>
+          <p class="muted small note">{t('progress.groupsNote')}</p>
         </div>
-        <p class="muted small note">{t('progress.groupsNote')}</p>
-      </div>
-    {/if}
+      {/if}
 
-    {#if attention.length}
-      <div class="section">
-        <div class="section-title">{t('progress.attention')}</div>
-        <ExerciseStatusList items={allAttention ? attention : attention.slice(0, SHORT_LIST)} />
-        {#if !allAttention && attention.length > SHORT_LIST}
-          <button class="btn btn-ghost btn-block more" onclick={() => (allAttention = true)}>
-            {t('exercise.all', { n: attention.length })}
-          </button>
-        {/if}
-      </div>
-    {/if}
-
-    {#if bests.length}
-      <div class="section">
-        <div class="section-title">{t('progress.records')}</div>
-        <div class="list">
-          {#each allBests ? bests : bests.slice(0, SHORT_LIST) as best (best.exercise.id + best.date)}
-            <a class="list-item" href="#/exercise/{best.exercise.id}">
-              <span class="badge-icon"><Icon name="trophy" /></span>
-              <span class="body">
-                <span class="title">{nameOf(best.exercise)}</span>
-                <span class="sub">{fmtSet(best.set, best.exercise.load)} · {fmtDate(best.date)}</span>
-              </span>
-              <span class="muted small">{t('progress.recordGain', { percent: fmtNumber(Math.round(best.gain * 100)) })}</span>
-            </a>
-          {/each}
+      {#if attention.length}
+        <div class="section">
+          <div class="section-title">{t('progress.attention')}</div>
+          <ExerciseStatusList items={allAttention ? attention : attention.slice(0, SHORT_LIST)} />
+          {#if !allAttention && attention.length > SHORT_LIST}
+            <button class="btn btn-ghost btn-block more" onclick={() => (allAttention = true)}>
+              {t('exercise.all', { n: attention.length })}
+            </button>
+          {/if}
         </div>
-        {#if !allBests && bests.length > SHORT_LIST}
-          <button class="btn btn-ghost btn-block more" onclick={() => (allBests = true)}>
-            {t('exercise.all', { n: bests.length })}
-          </button>
-        {/if}
-      </div>
-    {/if}
+      {/if}
 
-    <div class="section">
-      <div class="section-title">{t('progress.calendar')}</div>
-      <div class="card">
-        <p class="muted small summary">
-          {t('progress.calendarSummary', { workouts: tn('common.workouts', data.value.workoutsInCalendar) })}
-        </p>
-        <TrainingCalendar weeks={data.value.calendar} />
-      </div>
-    </div>
+      {#if bests.length}
+        <div class="section">
+          <div class="section-title">{t('progress.records')}</div>
+          <div class="list">
+            {#each allBests ? bests : bests.slice(0, SHORT_LIST) as best (best.exercise.id + best.date)}
+              <a class="list-item" href="#/exercise/{best.exercise.id}">
+                <span class="badge-icon"><Icon name="trophy" /></span>
+                <span class="body">
+                  <span class="title">{nameOf(best.exercise)}</span>
+                  <span class="sub">{fmtSet(best.set, best.exercise.load)} · {fmtDate(best.date)}</span>
+                </span>
+                <span class="muted small">{t('progress.recordGain', { percent: fmtNumber(Math.round(best.gain * 100)) })}</span>
+              </a>
+            {/each}
+          </div>
+          {#if !allBests && bests.length > SHORT_LIST}
+            <button class="btn btn-ghost btn-block more" onclick={() => (allBests = true)}>
+              {t('exercise.all', { n: bests.length })}
+            </button>
+          {/if}
+        </div>
+      {/if}
 
-    <div class="section">
-      <div class="section-title">{t('progress.volume')}</div>
-      <div class="card"><WeeklyBars weeks={data.value.weeks} /></div>
+      <div class="section">
+        <div class="section-title">{t('progress.calendar')}</div>
+        <div class="card">
+          <p class="muted small summary">
+            {t('progress.calendarSummary', { workouts: tn('common.workouts', data.value.workoutsInCalendar) })}
+          </p>
+          <TrainingCalendar weeks={data.value.calendar} />
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">{t('progress.volume')}</div>
+        <div class="card"><WeeklyBars weeks={data.value.weeks} /></div>
+      </div>
     </div>
   {/if}
 </div>

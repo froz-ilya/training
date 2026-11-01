@@ -52,7 +52,7 @@
   </button>
 {/snippet}
 
-<Sheet bind:open title={t('workout.pickTitle')}>
+<Sheet bind:open tall title={t('workout.pickTitle')}>
   <div class="picker">
     <input class="input" type="search" placeholder={t('workout.searchPlaceholder')} aria-label={t('common.search')} bind:value={query} />
 

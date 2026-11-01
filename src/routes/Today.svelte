@@ -58,66 +58,68 @@
   <Header title={t('shell.tab.today')} subtitle={fmtDate(toISODate(), { weekday: 'long', day: 'numeric', month: 'long' })} />
 
   {#if data.value}
-    {#if active}
-      <a class="hero pressable" href="#/workout/{active.id}">
-        <span class="kicker">{t('workout.inProgress')}</span>
-        <span class="hero-title">{titleOf(active)}</span>
-        <span class="muted">{t('workout.progressLine', { done: doneSets, total: allSets })}</span>
-        <span class="btn btn-primary btn-block btn-lg">{t('workout.resume')}</span>
-      </a>
-    {:else}
-      <div class="stack">
-        <NextWorkoutCard onstart={startDraft} onedit={editDraft} />
-        <button class="btn btn-block btn-lg" onclick={startEmpty}>
-          <Icon name="plus" size={22} />
-          {t('workout.new')}
-        </button>
-      </div>
-    {/if}
-
-    {#if data.value.planned.length}
-      <section class="section">
-        <h2 class="section-title">{t('workout.planned')}</h2>
-        <div class="list">
-          {#each data.value.planned as workout (workout.id)}
-            <a class="list-item" href="#/workout/{workout.id}">
-              <span class="grow title">{titleOf(workout)}</span>
-              <Icon name="chevron" size={18} />
-            </a>
-          {/each}
+    <div class="content-in">
+      {#if active}
+        <a class="hero pressable" href="#/workout/{active.id}">
+          <span class="kicker">{t('workout.inProgress')}</span>
+          <span class="hero-title">{titleOf(active)}</span>
+          <span class="muted">{t('workout.progressLine', { done: doneSets, total: allSets })}</span>
+          <span class="btn btn-primary btn-block btn-lg">{t('workout.resume')}</span>
+        </a>
+      {:else}
+        <div class="stack">
+          <NextWorkoutCard onstart={startDraft} onedit={editDraft} />
+          <button class="btn btn-block btn-lg" onclick={startEmpty}>
+            <Icon name="plus" size={22} />
+            {t('workout.new')}
+          </button>
         </div>
-      </section>
-    {/if}
+      {/if}
 
-    {#if data.value.recent.length}
-      <section class="section">
-        <h2 class="section-title">
-          {t('workout.recent')}
-          <span class="count">{tn('workout.thisWeek', data.value.thisWeek)}</span>
-        </h2>
-        <div class="list">
-          {#each data.value.recent as workout (workout.id)}
-            <div class="list-item recent">
-              <a class="grow open" href="#/workout/{workout.id}">
-                <span class="title">{titleOf(workout)}</span>
-                <span class="sub">{fmtDate(workout.date)}</span>
+      {#if data.value.planned.length}
+        <section class="section">
+          <h2 class="section-title">{t('workout.planned')}</h2>
+          <div class="list">
+            {#each data.value.planned as workout (workout.id)}
+              <a class="list-item" href="#/workout/{workout.id}">
+                <span class="grow title">{titleOf(workout)}</span>
+                <Icon name="chevron" size={18} />
               </a>
-              {#if !active}
-                <button class="icon-btn" aria-label={t('workout.repeatNamed', { name: titleOf(workout) })} onclick={() => repeat(workout)}>
-                  <Icon name="refresh" />
-                </button>
-              {/if}
-            </div>
-          {/each}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if data.value.recent.length}
+        <section class="section">
+          <h2 class="section-title">
+            {t('workout.recent')}
+            <span class="count">{tn('workout.thisWeek', data.value.thisWeek)}</span>
+          </h2>
+          <div class="list">
+            {#each data.value.recent as workout (workout.id)}
+              <div class="list-item recent">
+                <a class="grow open" href="#/workout/{workout.id}">
+                  <span class="title">{titleOf(workout)}</span>
+                  <span class="sub">{fmtDate(workout.date)}</span>
+                </a>
+                {#if !active}
+                  <button class="icon-btn" aria-label={t('workout.repeatNamed', { name: titleOf(workout) })} onclick={() => repeat(workout)}>
+                    <Icon name="refresh" />
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </section>
+      {:else if !active}
+        <div class="empty">
+          <p>{t('workout.none')}</p>
+          <p class="small">{t('workout.noneHint')}</p>
+          <a class="btn btn-ghost" href="#/import">{t('workout.importHistory')}</a>
         </div>
-      </section>
-    {:else if !active}
-      <div class="empty">
-        <p>{t('workout.none')}</p>
-        <p class="small">{t('workout.noneHint')}</p>
-        <a class="btn btn-ghost" href="#/import">{t('workout.importHistory')}</a>
-      </div>
-    {/if}
+      {/if}
+    </div>
   {/if}
 </div>
 

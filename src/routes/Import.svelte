@@ -96,7 +96,7 @@
         <li>{t('import.format.optional')}</li>
         <li>{t('import.format.repeat')}</li>
       </ul>
-      <pre data-no-edge-swipe>{example}</pre>
+      <pre>{example}</pre>
       <button class="btn btn-block" onclick={copyExample}>{t('import.format.copy')}</button>
     </details>
   {/if}

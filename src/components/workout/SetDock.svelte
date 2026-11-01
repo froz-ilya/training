@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { fly } from 'svelte/transition';
   import Icon from '../Icon.svelte';
   import NumberStepper from './NumberStepper.svelte';
   import { t } from '../../lib/i18n.svelte';
-  import { dur } from '../../lib/motion';
+  import { MOTION, slideUp } from '../../lib/motion';
   import { fmtCompact } from './display';
   import type { SessionSet } from '../../lib/coach/strength';
   import type { Load, WorkoutSet } from '../../lib/types';
@@ -69,7 +68,7 @@
   role="group"
   aria-label={t('workout.nextSetDock')}
   style:transform={lift ? `translateY(-${lift}px)` : undefined}
-  transition:fly={{ y: 40, duration: dur(160) }}
+  transition:slideUp={{ duration: MOTION.base }}
 >
   <div class="top">
     <span class="title">

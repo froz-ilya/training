@@ -16,6 +16,28 @@
     },
   ] as const;
 
+  /** Where the indicator sits: over the active tab, whose width depends on its label. */
+  let bar = $state<HTMLElement>();
+  let indicator = $state<{ x: number; y: number } | null>(null);
+
+  function place() {
+    const pill = bar?.querySelector<HTMLElement>('.tab.active .pill');
+    indicator = pill ? { x: pill.offsetLeft, y: pill.offsetTop } : null;
+  }
+
+  $effect(() => {
+    void route.path;
+    place();
+  });
+
+  // Tabs change width with the language and when the web font arrives.
+  $effect(() => {
+    if (!bar) return;
+    const observer = new ResizeObserver(place);
+    for (const tab of bar.querySelectorAll('.tab')) observer.observe(tab);
+    return () => observer.disconnect();
+  });
+
   function select(path: string) {
     if (route.path === path) {
       // Tapping the active tab scrolls back to the top, like iOS.
@@ -26,7 +48,10 @@
   }
 </script>
 
-<nav class="app-tabbar" aria-label={t('shell.tab.nav')}>
+<nav class="app-tabbar" aria-label={t('shell.tab.nav')} bind:this={bar}>
+  {#if indicator}
+    <span class="indicator" aria-hidden="true" style:transform="translate3d({indicator.x}px, {indicator.y}px, 0)"></span>
+  {/if}
   {#each TABS as tab (tab.path)}
     {@const active = route.path === tab.path}
     <a
@@ -106,20 +131,27 @@
   }
   .tab:active {
     transform: scale(0.92);
+    transition-duration: var(--dur-press);
   }
   .pill {
+    position: relative;
     display: grid;
     place-items: center;
     width: 54px;
     height: 30px;
+  }
+  .indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 54px;
+    height: 30px;
     border-radius: 999px;
-    transition: background-color var(--dur) var(--ease);
+    background: var(--accent-soft);
+    transition: transform var(--dur) var(--ease);
   }
   .tab.active {
     color: var(--accent);
-  }
-  .tab.active .pill {
-    background: var(--accent-soft);
   }
   .tab:focus-visible {
     outline: 2px solid var(--accent);

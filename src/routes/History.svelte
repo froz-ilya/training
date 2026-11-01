@@ -69,29 +69,31 @@
   {#if data.value === undefined}
     <Skeleton lines={6} />
   {:else if months.length}
-    {#each months as group (group.month)}
-      <section class="section">
-        <h2 class="section-title">{fmtDate(`${group.month}-01`, { month: 'long', year: 'numeric' })}</h2>
-        <div class="list">
-          {#each group.workouts as workout (workout.id)}
-            {@const summary = data.value.summaries.get(workout.id)}
-            <div class="list-item row-item">
-              <a class="open" href="#/workout/{workout.id}">
-                <span class="title">{titleOf(workout)}</span>
-                <span class="sub">
-                  {fmtDate(workout.date, { day: 'numeric', month: 'short', weekday: 'short' })}
-                  {#if summary}· {tn('common.exercises', summary.exercises)} · {tn('common.sets', summary.sets)}{/if}
-                </span>
-              </a>
-              <button class="icon-btn" aria-label={t('workout.more')} onclick={() => menu(workout)}><Icon name="more" /></button>
-            </div>
-          {/each}
-        </div>
-      </section>
-    {/each}
-    {#if data.value.hasMore}
-      <button class="btn btn-block more" onclick={() => (shown += PAGE)}>{t('workout.showMore')}</button>
-    {/if}
+    <div class="content-in">
+      {#each months as group (group.month)}
+        <section class="section">
+          <h2 class="section-title">{fmtDate(`${group.month}-01`, { month: 'long', year: 'numeric' })}</h2>
+          <div class="list">
+            {#each group.workouts as workout (workout.id)}
+              {@const summary = data.value.summaries.get(workout.id)}
+              <div class="list-item row-item">
+                <a class="open" href="#/workout/{workout.id}">
+                  <span class="title">{titleOf(workout)}</span>
+                  <span class="sub">
+                    {fmtDate(workout.date, { day: 'numeric', month: 'short', weekday: 'short' })}
+                    {#if summary}· {tn('common.exercises', summary.exercises)} · {tn('common.sets', summary.sets)}{/if}
+                  </span>
+                </a>
+                <button class="icon-btn" aria-label={t('workout.more')} onclick={() => menu(workout)}><Icon name="more" /></button>
+              </div>
+            {/each}
+          </div>
+        </section>
+      {/each}
+      {#if data.value.hasMore}
+        <button class="btn btn-block more" onclick={() => (shown += PAGE)}>{t('workout.showMore')}</button>
+      {/if}
+    </div>
   {:else}
     <p class="empty">{t('workout.historyEmpty')}</p>
   {/if}

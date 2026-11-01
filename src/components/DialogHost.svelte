@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { fade, fly, scale } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { fade, scale } from 'svelte/transition';
   import Icon from './Icon.svelte';
   import { useModal } from './Sheet.svelte';
   import { ui, type ActionItem, type Dialog } from '../lib/ui/dialogs.svelte';
-  import { dur } from '../lib/motion';
+  import { dur, easeOut, MOTION, slideUp } from '../lib/motion';
   import { t } from '../lib/i18n.svelte';
   import { openOverlay } from '../lib/ui/overlay';
 
@@ -12,6 +11,8 @@
    * Renders ui.dialog (promptText / confirmAction / chooseAction). Mounted once in App.
    * Keyed {#each} so an outgoing dialog keeps its content while it animates out, and a new
    * one (e.g. "Rename" from an action sheet opening a prompt) can animate in at the same time.
+   * The panels' transitions are global because the block they react to is that {#each}, not the
+   * {#if} around them. A prompt only fades: its field has the keyboard opening on it.
    */
   let text = $state('');
   let lastDialog: Dialog | null = null;
@@ -70,15 +71,15 @@
 <svelte:window {onkeydown} />
 
 {#each ui.dialog ? [ui.dialog] : [] as d (d)}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="backdrop"
-    class:bottom={d.kind === 'actions'}
-    class:top={d.kind === 'prompt'}
-    role="presentation"
-    transition:fade={{ duration: dur(200) }}
-    onclick={(e) => e.target === e.currentTarget && cancel(d)}
-  >
+  <div class="backdrop" class:bottom={d.kind === 'actions'} class:top={d.kind === 'prompt'}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="scrim"
+      data-scrim
+      role="presentation"
+      transition:fade={{ duration: dur(MOTION.base), easing: easeOut }}
+      onclick={() => cancel(d)}
+    ></div>
     {#if d.kind === 'actions'}
       <div
         class="sheet"
@@ -87,7 +88,7 @@
         aria-label={d.title || t('shell.actions')}
         tabindex="-1"
         {@attach modal}
-        transition:fly={{ y: 320, duration: dur(320), easing: cubicOut, opacity: 1 }}
+        transition:slideUp|global={{ duration: MOTION.base }}
       >
         <div class="group">
           {#if d.title}<div class="sheet-title">{d.title}</div>{/if}
@@ -109,8 +110,8 @@
         aria-labelledby="dialog-title"
         tabindex="-1"
         {@attach modal}
-        in:scale={{ start: 0.92, duration: dur(220), easing: cubicOut }}
-        out:fade={{ duration: dur(150) }}
+        in:scale|global={{ start: d.kind === 'prompt' ? 1 : 0.96, duration: dur(MOTION.base), easing: easeOut }}
+        out:scale|global={{ start: d.kind === 'prompt' ? 1 : 0.98, duration: dur(MOTION.fast), easing: easeOut }}
       >
         <form
           onsubmit={(e) => {
@@ -161,7 +162,7 @@
     align-items: center;
     justify-content: center;
     padding: calc(var(--safe-top) + 16px) 24px calc(var(--safe-bottom) + 16px);
-    background: var(--backdrop);
+    pointer-events: none;
   }
   /* Prompts sit high so the iOS keyboard doesn't cover them. */
   .backdrop.top {
@@ -175,6 +176,8 @@
 
   /* ---- Alert (prompt / confirm) ---- */
   .alert {
+    position: relative;
+    pointer-events: auto;
     width: 100%;
     max-width: 300px;
     background: var(--surface-raised);
@@ -243,6 +246,8 @@
 
   /* ---- Action sheet ---- */
   .sheet {
+    position: relative;
+    pointer-events: auto;
     width: 100%;
     max-width: 640px;
     display: flex;

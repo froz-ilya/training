@@ -6,6 +6,7 @@
   import SetSuggestion from '../coach/SetSuggestion.svelte';
   import { compareExercise, compareSet, pairSets } from '../../lib/coach/compare';
   import { fmtDate, toISODate } from '../../lib/dates';
+  import { collapse, reducedMotion } from '../../lib/motion';
   import { nameOf } from '../../lib/exercises.svelte';
   import { t } from '../../lib/i18n.svelte';
   import { fmtCompact, percentValue, weightHeading } from './display';
@@ -96,6 +97,14 @@
     warmups.some((s) => s.id === openSetId) || (warmupsChoice ?? (checkable && warmups.some((s) => !s.done))),
   );
 
+  /** A new row opens from no height, so it needs scrolling into view again once it's full size. */
+  function keepSelectedInView(e: Event) {
+    if (!openSetId) return;
+    (e.currentTarget as HTMLElement)
+      .querySelector(`[data-set="${CSS.escape(openSetId)}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  }
+
   function toggleWarmups() {
     const shown = warmupsShown;
     untrack(() => (warmupsChoice = !shown));
@@ -111,22 +120,24 @@
 
 {#snippet row(set: WorkoutSet)}
   {@const previous = previousOf(set)}
-  <SetRow
-    {set}
-    number={workNumber(set)}
-    {previous}
-    change={compareSet(set, previous, { load, bodyKg: body })}
-    {calm}
-    {load}
-    {checkable}
-    selected={openSetId === set.id}
-    onselect={() => onselect(set)}
-    oncheck={() => oncheck(set)}
-  />
   {@const own = notes.filter((n) => n.setId === set.id)}
-  {#if own.length}
-    <div class="set-notes"><NoteChips notes={own} onedit={() => onnote(set)} /></div>
-  {/if}
+  <div class="set-slot" transition:collapse onintroend={keepSelectedInView}>
+    <SetRow
+      {set}
+      number={workNumber(set)}
+      {previous}
+      change={compareSet(set, previous, { load, bodyKg: body })}
+      {calm}
+      {load}
+      {checkable}
+      selected={openSetId === set.id}
+      onselect={() => onselect(set)}
+      oncheck={() => oncheck(set)}
+    />
+    {#if own.length}
+      <div class="set-notes" transition:collapse><NoteChips notes={own} onedit={() => onnote(set)} /></div>
+    {/if}
+  </div>
 {/snippet}
 
 <section class="card exercise">
@@ -169,7 +180,7 @@
     {/if}
   </p>
   {#if cardNotes.length}
-    <NoteChips notes={cardNotes} onedit={() => onnote()} />
+    <div class="card-notes" transition:collapse><NoteChips notes={cardNotes} onedit={() => onnote()} /></div>
   {/if}
   {#if moved && last}
     <p class="context order">
@@ -206,9 +217,11 @@
           <span class="sr">{warmupsShown ? t('workout.hideWarmups') : t('workout.showWarmups')}</span>
         </button>
         {#if warmupsShown}
-          {#each warmups as set (set.id)}
-            {@render row(set)}
-          {/each}
+          <div transition:collapse onintroend={keepSelectedInView}>
+            {#each warmups as set (set.id)}
+              {@render row(set)}
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -376,7 +389,7 @@
   .chevron {
     flex-shrink: 0;
     display: grid;
-    transition: transform var(--dur-fast) var(--ease);
+    transition: transform var(--dur) var(--ease);
   }
   .chevron.open {
     transform: rotate(90deg);
@@ -391,6 +404,10 @@
   .foot {
     display: flex;
     justify-content: space-between;
+  }
+  /* Padding rather than a margin, so the gap between rows opens with the row. */
+  .set-slot + .set-slot {
+    padding-top: 1px;
   }
   .set-notes {
     padding: 0 4px 4px 32px;

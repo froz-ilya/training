@@ -1,5 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
+  import { flip } from 'svelte/animate';
+  import { fade } from 'svelte/transition';
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
@@ -39,7 +41,7 @@
   import { getExercise, nameOf } from '../lib/exercises.svelte';
   import { t, tn } from '../lib/i18n.svelte';
   import { live } from '../lib/live.svelte';
-  import { reducedMotion } from '../lib/motion';
+  import { collapse, dur, easeOut, MOTION, reducedMotion } from '../lib/motion';
   import { go, replace, route } from '../lib/router.svelte';
   import { settings as appSettings } from '../lib/settings.svelte';
   import type { ActionItem } from '../lib/ui/dialogs.svelte';
@@ -338,29 +340,34 @@
 
     {#if workout.note}<p class="note muted">{workout.note}</p>{/if}
 
-    <div class="exercises">
+    <div class="exercises content-in">
       {#each details as detail, index (detail.entry.entry)}
-        <ExerciseCard
-          entry={detail.entry}
-          exercise={detail.exercise}
-          settings={detail.settings}
-          last={last[detail.entry.exerciseId]}
-          position={index + 1}
-          previousName={index > 0 ? nameBefore(index) : null}
-          {cost}
-          {body}
-          checkable={logging}
-          {openSetId}
-          onselect={(set) => (openSetId = openSetId === set.id ? null : set.id)}
-          oncheck={toggleCheck}
-          onaddset={() => newSet(detail.entry)}
-          onmenu={() => exerciseMenu(detail, index)}
-          onmachine={() => editMachine(detail.entry.exerciseId, detail.settings?.machineSetting)}
-          onsuggest={workout.status === 'done' ? undefined : (suggestion) => save(applyPlan(workout.id, detail.entry.entry, suggestion.sets))}
-          notes={detail.notes}
-          offDay={isOffDay(detail.notes, appSettings.customTags)}
-          onnote={(set) => openNote(detail, set)}
-        />
+        <div
+          animate:flip={{ duration: dur(MOTION.base), easing: easeOut }}
+          transition:fade={{ duration: dur(MOTION.fast), easing: easeOut }}
+        >
+          <ExerciseCard
+            entry={detail.entry}
+            exercise={detail.exercise}
+            settings={detail.settings}
+            last={last[detail.entry.exerciseId]}
+            position={index + 1}
+            previousName={index > 0 ? nameBefore(index) : null}
+            {cost}
+            {body}
+            checkable={logging}
+            {openSetId}
+            onselect={(set) => (openSetId = openSetId === set.id ? null : set.id)}
+            oncheck={toggleCheck}
+            onaddset={() => newSet(detail.entry)}
+            onmenu={() => exerciseMenu(detail, index)}
+            onmachine={() => editMachine(detail.entry.exerciseId, detail.settings?.machineSetting)}
+            onsuggest={workout.status === 'done' ? undefined : (suggestion) => save(applyPlan(workout.id, detail.entry.entry, suggestion.sets))}
+            notes={detail.notes}
+            offDay={isOffDay(detail.notes, appSettings.customTags)}
+            onnote={(set) => openNote(detail, set)}
+          />
+        </div>
       {:else}
         <p class="empty">{t('workout.noExercises')}</p>
       {/each}
@@ -380,7 +387,8 @@
     {#key failedSaves}
       {#if selected}
         {@const { set, detail } = selected}
-        <div class="dock-space" class:tall={detail.exercise?.levels}></div>
+        <!-- Full height at once, so the selected row can scroll clear of the dock. It only shrinks going away. -->
+        <div class="dock-space" class:tall={detail.exercise?.levels} out:collapse></div>
         <SetDock
           {set}
           {...dockProps(set, detail)}

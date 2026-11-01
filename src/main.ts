@@ -13,6 +13,9 @@ import './lib/install.svelte'; // listen for beforeinstallprompt from the start
 
 const target = document.getElementById('app')!;
 
+// iOS Safari only applies :active, which all press feedback uses, on a page that listens for touches.
+document.addEventListener('touchstart', () => {}, { passive: true });
+
 /**
  * Updates. A new version installs in the background and then waits (registerType 'prompt'), because
  * reloading under the user could lose a comment being typed. It takes over:

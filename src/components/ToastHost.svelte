@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { fly, fade } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
-  import { cubicOut } from 'svelte/easing';
   import { ui, dismissToast, type Toast } from '../lib/ui/dialogs.svelte';
-  import { dur } from '../lib/motion';
+  import { dur, easeOut, MOTION } from '../lib/motion';
 
   /** Stacked toasts above the tab bar. Mounted once in App. */
   function act(t: Toast) {
@@ -17,9 +16,9 @@
     <div
       class="toast"
       role="status"
-      animate:flip={{ duration: dur(220), easing: cubicOut }}
-      in:fly={{ y: 24, duration: dur(260), easing: cubicOut }}
-      out:fade={{ duration: dur(160) }}
+      animate:flip={{ duration: dur(MOTION.base), easing: easeOut }}
+      in:fly={{ y: 16, duration: dur(MOTION.base), easing: easeOut }}
+      out:fly={{ y: 8, duration: dur(MOTION.fast), easing: easeOut }}
     >
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <span class="msg" onclick={() => dismissToast(t.id)}>{t.message}</span>

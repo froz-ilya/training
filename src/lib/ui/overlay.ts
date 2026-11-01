@@ -1,6 +1,6 @@
 /**
- * Overlay stack: lets the system back button / back gesture (Android) close an open dialog,
- * action sheet or bottom sheet before it navigates.
+ * Overlay stack: lets the system back button or back gesture (Android's, or iOS's edge swipe) close
+ * an open dialog, action sheet or bottom sheet before it navigates.
  *
  * Opening an overlay pushes a same-URL history entry ({ ...history.state, overlay: id }), so
  * the router (which ignores pops whose hash equals the current one) doesn't navigate. A back

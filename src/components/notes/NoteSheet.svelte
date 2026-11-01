@@ -102,6 +102,10 @@
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease),
+      opacity var(--dur-fast) var(--ease);
   }
   .tag.on {
     background: var(--accent-fill);

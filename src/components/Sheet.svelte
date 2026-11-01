@@ -17,8 +17,9 @@
     blocked = [];
     for (let node = top; node?.parentElement; node = node.parentElement) {
       for (const sibling of node.parentElement.children) {
-        // Toasts stay live: "Undo" must still work while a sheet opens over it.
-        if (sibling === node || !(sibling instanceof HTMLElement) || sibling.inert || sibling.matches('[aria-live]')) continue;
+        // Toasts stay live: "Undo" must still work while a sheet opens over it. The scrim stays live
+        // so a tap on it closes the panel.
+        if (sibling === node || !(sibling instanceof HTMLElement) || sibling.inert || sibling.matches('[aria-live], [data-scrim]')) continue;
         sibling.inert = true;
         blocked.push(sibling);
       }
@@ -113,9 +114,8 @@
 </script>
 
 <script lang="ts">
-  import { fade, fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
-  import { dur } from '../lib/motion';
+  import { fade } from 'svelte/transition';
+  import { dur, easeOut, MOTION, slideUp } from '../lib/motion';
   import { ui } from '../lib/ui/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import { openOverlay } from '../lib/ui/overlay';
@@ -129,12 +129,30 @@
   let {
     open = $bindable(false),
     title,
+    tall = false,
     children,
     onclose,
-  }: { open?: boolean; title?: string; children: Snippet; onclose?: () => void } = $props();
+  }: {
+    open?: boolean;
+    title?: string;
+    /** Full height from the start, for a list that loads or filters while the sheet is open. */
+    tall?: boolean;
+    children: Snippet;
+    onclose?: () => void;
+  } = $props();
+
+  /** Follows `open` a moment later: a sheet mounted already open would skip its slide otherwise. */
+  let shown = $state(false);
+  $effect(() => {
+    shown = open;
+  });
+
+  // Closing is quicker than opening: nobody waits to read a sheet that's leaving.
+  const duration = $derived(open ? MOTION.slow : MOTION.base);
 
   let dragY = $state(0);
   let dragging = $state(false);
+  let height = $state(1);
   let startY = 0;
   let lastY = 0;
   let lastT = 0;
@@ -149,6 +167,7 @@
 
   $effect.pre(() => {
     if (open) dragY = 0;
+    else dragging = false;
   });
 
   // System back (Android) closes the sheet instead of leaving the page.
@@ -161,6 +180,7 @@
   function down(e: PointerEvent) {
     if (e.button !== 0) return;
     dragging = true;
+    height = (e.currentTarget as HTMLElement).parentElement?.offsetHeight || 1;
     startY = lastY = e.clientY;
     lastT = e.timeStamp;
     velocity = 0;
@@ -169,19 +189,20 @@
 
   function move(e: PointerEvent) {
     if (!dragging) return;
-    const dy = e.clientY - startY;
-    // Rubber-band upwards, follow the finger downwards.
-    dragY = dy > 0 ? dy : -Math.sqrt(-dy) * 2;
+    // Follows the finger down. It doesn't go up: that would open a gap under the sheet.
+    dragY = Math.max(0, e.clientY - startY);
     const dt = e.timeStamp - lastT;
     if (dt > 0) velocity = (e.clientY - lastY) / dt;
     lastY = e.clientY;
     lastT = e.timeStamp;
   }
 
-  function up() {
+  function up(e: PointerEvent) {
     if (!dragging) return;
     dragging = false;
-    if (dragY > 110 || (dragY > 24 && velocity > 0.5)) close();
+    // A finger that stopped before lifting has no speed left, whatever its last move was.
+    const flicked = velocity > 0.5 && e.timeStamp - lastT < 100;
+    if (e.type === 'pointerup' && (dragY > 110 || (dragY > 24 && flicked))) close();
     else dragY = 0;
   }
 
@@ -198,24 +219,28 @@
 
 <svelte:window {onkeydown} />
 
-{#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="sheet-backdrop"
-    role="presentation"
-    transition:fade={{ duration: dur(220) }}
-    onclick={(e) => e.target === e.currentTarget && close()}
-  >
+{#if shown}
+  <div class="sheet-root">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="scrim"
+      data-scrim
+      role="presentation"
+      style:opacity={dragY ? 1 - dragY / height : undefined}
+      transition:fade={{ duration: dur(duration), easing: easeOut }}
+      onclick={close}
+    ></div>
     <div
       class="sheet-panel"
       class:dragging
+      class:tall
       role="dialog"
       aria-modal="true"
       aria-label={title ?? t('shell.sheet')}
       tabindex="-1"
       {@attach modal}
       style:transform={dragY ? `translate3d(0, ${dragY}px, 0)` : undefined}
-      transition:fly={{ y: 480, duration: dur(320), easing: cubicOut, opacity: 1 }}
+      transition:slideUp={{ duration }}
     >
       <div
         class="sheet-grip"
@@ -236,16 +261,19 @@
 {/if}
 
 <style>
-  .sheet-backdrop {
+  /* Lets taps through: only the scrim and the panel take them, and neither does while closing. */
+  .sheet-root {
     position: fixed;
     inset: 0;
     z-index: 80;
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    background: var(--backdrop);
+    pointer-events: none;
   }
   .sheet-panel {
+    position: relative;
+    pointer-events: auto;
     width: 100%;
     max-width: 640px;
     max-height: 85vh;
@@ -259,8 +287,12 @@
     outline: none;
     transition: transform var(--dur) var(--ease);
   }
+  .sheet-panel.tall {
+    height: calc(100dvh - var(--safe-top) - 24px);
+  }
   .sheet-panel.dragging {
     transition: none;
+    will-change: transform;
   }
   .sheet-grip {
     flex-shrink: 0;
@@ -292,10 +324,5 @@
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     padding: 4px 16px calc(var(--safe-bottom) + 16px);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .sheet-panel {
-      transition: none;
-    }
   }
 </style>

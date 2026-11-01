@@ -96,9 +96,6 @@
     scroll-margin: 16px 0 var(--dock-clear, 210px);
     transition: background-color var(--dur-fast) var(--ease);
   }
-  .row + :global(.row) {
-    margin-top: 1px;
-  }
   .row.selected {
     background: var(--accent-soft);
     box-shadow: inset 0 0 0 1.5px var(--accent);

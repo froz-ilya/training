@@ -53,12 +53,15 @@
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  /* Motion: iOS-like ease-out. Durations are for CSS; JS uses dur() from lib/motion.ts. */
+  /* Motion. --ease decelerates and is easeOut in JS; the durations are MOTION in lib/motion.ts.
+     press: a finger going down. fast: small state changes and things leaving.
+     default: height changes, the dock, dialogs, toasts. slow: sheets opening, pages sliding. */
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-press: 90ms;
   --dur-fast: 160ms;
-  --dur: 300ms;
-  --dur-slow: 450ms;
+  --dur: 220ms;
+  --dur-slow: 300ms;
   /* Height of the bottom tab bar incl. safe area; 0 on pages without it (see TabBar). */
   --tabbar-h: 0px;
 }
@@ -134,7 +137,7 @@
   --shadow-lg: inset 0 0 0 1px var(--hairline), 0 24px 60px -12px rgb(0 0 0 / 0.75);
   --shadow-feature: inset 0 0 0 1px rgb(255 255 255 / 0.07), 0 20px 40px -24px rgb(0 0 0 / 0.9);
   --shadow-accent: 0 10px 26px -10px var(--accent-glow);
-  /* Edge of a page sliding over another (page transitions, edge-swipe back) */
+  /* Edge of a page sliding over another (page transitions) */
   --shadow-edge: -8px 0 32px rgb(0 0 0 / 0.5);
 
   /* Translucent bars, overlays, toasts */
@@ -144,7 +147,6 @@
   --toast-bg: #262d3f;
   --toast-text: #edf0f7;
   --toast-action: #f6c35b;
-  --skeleton-shine: #2a3144;
   color-scheme: dark;
 }
 
@@ -200,7 +202,6 @@
   --toast-bg: #1d2130;
   --toast-text: #f3f1ec;
   --toast-action: #f6c35b;
-  --skeleton-shine: #f9f7f2;
   color-scheme: light;
 }
 
@@ -222,8 +223,8 @@ body {
   font: 17px/1.4 var(--font-ui);
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
-  /* Horizontal only: keeps iOS's vertical rubber-band bounce, but stops sideways swipes from
-     triggering browser back/forward (the app has its own edge-swipe back). */
+  /* Horizontal only: keeps iOS's vertical rubber-band bounce. Going back by swiping from the edge is
+     WebKit's own gesture, Home Screen apps included, and the page can't turn it off. */
   overscroll-behavior-x: none;
 }
 
@@ -286,6 +287,15 @@ li,
 .title,
 .sub {
   overflow-wrap: break-word;
+}
+
+/* The dimmed layer behind a sheet or dialog. A sibling of the panel, so fading it leaves the panel
+   solid: <div class="scrim" data-scrim role="presentation"></div> */
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--backdrop);
+  pointer-events: auto;
 }
 
 /* ---------- Layout ---------- */
@@ -405,6 +415,7 @@ li,
 .pressable:active {
   transform: scale(0.97);
   opacity: 0.9;
+  transition-duration: var(--dur-press);
 }
 
 .list-item .title {
@@ -451,6 +462,17 @@ li,
 
 /* ---------- Buttons ---------- */
 
+/* Press feedback for every control: quick going down, gentle coming back. Zero specificity, so a
+   component's own :active rule wins. */
+:where(button, a[href], summary) {
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+:where(button:not(:disabled), a[href], summary):active {
+  opacity: 0.65;
+  transition-duration: var(--dur-press);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -479,6 +501,7 @@ li,
 .btn:active {
   opacity: 0.85;
   transform: scale(0.97);
+  transition-duration: var(--dur-press);
 }
 
 .btn:disabled:active {
@@ -547,6 +570,7 @@ li,
 .icon-btn:active {
   background: var(--surface-2);
   transform: scale(0.92);
+  transition-duration: var(--dur-press);
 }
 
 /* ---------- Forms ---------- */
@@ -618,7 +642,12 @@ textarea.input {
   transition:
     background-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
+    box-shadow var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.segmented button:active {
+  transition-duration: var(--dur-press);
 }
 
 .segmented button.active {
@@ -764,6 +793,18 @@ label:has(> input[type='checkbox']) {
   animation: fade-in var(--dur) var(--ease) both;
 }
 
+/* Content arriving from the database. Opacity only: a transform here would capture the fixed dock
+   and sheets inside it. */
+@keyframes content-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.content-in {
+  animation: content-in var(--dur-fast) var(--ease) backwards;
+}
+
 .anim-pop {
   animation: pop var(--dur) var(--ease) both;
 }
@@ -782,7 +823,7 @@ label:has(> input[type='checkbox']) {
 ::view-transition-group(*),
 ::view-transition-old(*),
 ::view-transition-new(*) {
-  animation-duration: var(--dur);
+  animation-duration: var(--dur-slow);
   animation-timing-function: var(--ease);
 }
 
@@ -815,14 +856,26 @@ html[data-nav='back']::view-transition-new(root) {
 
 /* tab: quick crossfade; the tab bar stays put */
 html[data-nav='tab']::view-transition-old(root),
-html[data-nav='tab']::view-transition-new(root),
-html[data-nav='tab']::view-transition-group(tabbar),
-html[data-nav='tab']::view-transition-old(tabbar),
-html[data-nav='tab']::view-transition-new(tabbar) {
+html[data-nav='tab']::view-transition-new(root) {
   animation-duration: var(--dur-fast);
 }
 html[data-nav='tab'] .app-tabbar {
   view-transition-name: tabbar;
+}
+/* The new tab bar is live, so its indicator slides over. Crossfading it with the old one would show two. */
+html[data-nav='tab']::view-transition-group(tabbar),
+html[data-nav='tab']::view-transition-new(tabbar) {
+  animation: none;
+}
+html[data-nav='tab']::view-transition-old(tabbar) {
+  display: none;
+}
+
+/* Browsers without view transitions still get a quick fade. */
+@supports not (view-transition-name: none) {
+  .route-view > .page {
+    animation: content-in var(--dur-fast) var(--ease) backwards;
+  }
 }
 
 @keyframes vt-slide-in {
@@ -833,7 +886,7 @@ html[data-nav='tab'] .app-tabbar {
 @keyframes vt-shift-out {
   to {
     transform: translateX(-30%);
-    filter: brightness(0.85);
+    opacity: 0.7;
   }
 }
 @keyframes vt-slide-out {
@@ -844,7 +897,7 @@ html[data-nav='tab'] .app-tabbar {
 @keyframes vt-shift-in {
   from {
     transform: translateX(-30%);
-    filter: brightness(0.85);
+    opacity: 0.7;
   }
 }
 

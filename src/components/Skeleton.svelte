@@ -1,7 +1,10 @@
 <script lang="ts">
   import { t } from '../lib/i18n.svelte';
 
-  /** Shimmering placeholder lines while content loads. */
+  /**
+   * Pulsing placeholder lines while content loads. They wait a moment before showing, so a quick
+   * load doesn't flash them.
+   */
   let { lines = 3 }: { lines?: number } = $props();
 
   const WIDTHS = [92, 76, 84, 60, 70];
@@ -19,21 +22,23 @@
     flex-direction: column;
     gap: 10px;
     padding: 4px 0;
+    animation: appear var(--dur-fast) var(--ease) 140ms backwards;
   }
   .line {
     display: block;
     height: 14px;
     border-radius: 7px;
-    background: linear-gradient(90deg, var(--surface-2) 25%, var(--skeleton-shine) 50%, var(--surface-2) 75%);
-    background-size: 300% 100%;
-    animation: shimmer 1.4s ease-in-out infinite;
+    background: var(--surface-2);
+    animation: pulse 1.4s ease-in-out infinite;
   }
-  @keyframes shimmer {
+  @keyframes appear {
     from {
-      background-position: 100% 0;
+      opacity: 0;
     }
-    to {
-      background-position: 0 0;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.55;
     }
   }
   @media (prefers-reduced-motion: reduce) {

@@ -39,37 +39,39 @@
     {:else if !summary}
       <p class="empty">{t('progress.group.empty')}</p>
     {:else}
-      <div class="card trend first">
-        <div class="trend-head">
-          <span class="trend-title">{t('progress.group.trend')}</span>
-          {#if summary.trend !== null}<TrendPill change={summary.trend} />{/if}
+      <div class="content-in">
+        <div class="card trend first">
+          <div class="trend-head">
+            <span class="trend-title">{t('progress.group.trend')}</span>
+            {#if summary.trend !== null}<TrendPill change={summary.trend} />{/if}
+          </div>
+          <p class="muted small">
+            {summary.trend === null ? t('progress.group.noTrend') : t('progress.group.trendText', { n: summary.compared })}
+          </p>
         </div>
-        <p class="muted small">
-          {summary.trend === null ? t('progress.group.noTrend') : t('progress.group.trendText', { n: summary.compared })}
-        </p>
-      </div>
 
-      <div class="section">
-        <div class="section-title">{t('progress.volume')}</div>
-        <div class="card"><WeeklyBars weeks={summary.weeks} /></div>
-      </div>
-
-      {#each current as list (list.heading)}
         <div class="section">
-          <div class="section-title">{t(`progress.${list.heading}`)}</div>
-          <ExerciseStatusList items={list.items} />
+          <div class="section-title">{t('progress.volume')}</div>
+          <div class="card"><WeeklyBars weeks={summary.weeks} /></div>
         </div>
-      {/each}
 
-      {#if older}
-        <details class="section">
-          <summary class="section-title">
-            {t('progress.older')}
-            <span class="count">{older.items.length}<Icon name="chevron" size={14} /></span>
-          </summary>
-          <ExerciseStatusList items={older.items} />
-        </details>
-      {/if}
+        {#each current as list (list.heading)}
+          <div class="section">
+            <div class="section-title">{t(`progress.${list.heading}`)}</div>
+            <ExerciseStatusList items={list.items} />
+          </div>
+        {/each}
+
+        {#if older}
+          <details class="section">
+            <summary class="section-title">
+              {t('progress.older')}
+              <span class="count">{older.items.length}<Icon name="chevron" size={14} /></span>
+            </summary>
+            <ExerciseStatusList items={older.items} />
+          </details>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>

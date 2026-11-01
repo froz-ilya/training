@@ -11,7 +11,9 @@ import { afterOverlays } from './ui/overlay';
  * Moves between two tab roots are 'tab'; replace() is 'replace' (no animation).
  * When the View Transitions API is available (and motion isn't reduced) the route update
  * runs inside document.startViewTransition() and <html data-nav="…"> tells CSS which
- * animation to play (see app.css, "Page transitions").
+ * animation to play (see app.css, "Page transitions"). WebKit's edge swipe, which also works in
+ * Home Screen apps and can't be turned off, slides the pages itself: its popstate says so with
+ * hasUAVisualTransition, and the route then changes without a second animation.
  *
  * Open dialogs and sheets add same-URL history entries ({ ...state, overlay }) so the system
  * back button closes them first (see ui/overlay.ts). onExternal ignores those pops because the
@@ -38,15 +40,6 @@ export function isTabRoot(path: string): boolean {
 /** Whether a path leads to a page; anything else is a bad link, which gets the not-found page. */
 export function isKnownRoute(path: string): boolean {
   return isTabRoot(path) || path === '/import' || /^\/(workout|group|exercise)\/[^/]+$/.test(path);
-}
-
-/** Best guess at a page's parent, for back() when there is no history (e.g. a deep link). */
-export function parentOf(path: string): string {
-  const head = path.split('/').filter(Boolean)[0];
-  if (head === 'exercise') return '/exercises';
-  if (head === 'group') return '/progress';
-  if (head === 'import') return '/settings';
-  return '/';
 }
 
 let idx = 0;
@@ -93,7 +86,7 @@ function restoreScroll(dir: NavDirection) {
 }
 
 /** Apply a location change to `route`, animated when possible. */
-function commit(hash: string, requested: NavDirection) {
+function commit(hash: string, requested: NavDirection, animated = true) {
   const from = route.path;
   const to = pathOf(hash);
   const dir: NavDirection =
@@ -105,6 +98,7 @@ function commit(hash: string, requested: NavDirection) {
   };
 
   const animate =
+    animated &&
     typeof document !== 'undefined' &&
     typeof document.startViewTransition === 'function' &&
     dir !== 'replace' &&
@@ -142,7 +136,7 @@ function commit(hash: string, requested: NavDirection) {
 }
 
 /** Back/forward buttons, history.back(), or a hash typed by hand. */
-function onExternal() {
+function onExternal(e: Event) {
   const hash = currentHash();
   if (hash === current) return;
   scrollMemo.set(idx, window.scrollY);
@@ -158,7 +152,7 @@ function onExternal() {
     dir = 'forward';
   }
   current = hash;
-  commit(hash, dir);
+  commit(hash, dir, !(e as PopStateEvent).hasUAVisualTransition);
 }
 
 if (typeof window !== 'undefined') {

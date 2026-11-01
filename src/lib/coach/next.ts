@@ -42,6 +42,8 @@ export interface PlannedType {
   leftOut: string[];
   /** Muscles brought in because they're due this week. */
   added: Muscle[];
+  /** The muscles usually trained with each type, which are part of what it's called. */
+  partners: Record<string, Muscle[]>;
 }
 
 /** Another type or variant than the suggested one, for today only. Unknown ones are ignored. */
@@ -64,11 +66,29 @@ const MAX_OTHER_VARIANTS = 4;
 const ROTATION_GROUPS: readonly MuscleGroup[] = ['chest', 'back', 'legs'];
 /** The share of a day's chest, back and legs work that makes it count as that group's workout. */
 const TYPE_SHARE = 1 / 3;
+/** Between the groups of a type that a habit has joined. */
+const TYPE_JOIN = '+';
+/** How far back a habit is read, so an old split fades. */
+const HABIT_LOOKBACK = 12;
+const HABIT_MIN_DAYS = 2;
+/** More than this share of the days makes a habit: half is still a coin toss. */
+const HABIT_SHARE = 1 / 2;
+
+const isHabit = (days: number, ofDays: number) => days >= HABIT_MIN_DAYS && days / ofDays > HABIT_SHARE;
+
+/** The groups of a rotation type. */
+export function typeGroups(key: string): MuscleGroup[] {
+  return key.split(TYPE_JOIN) as MuscleGroup[];
+}
+
+function exerciseGroup(id: string, exercises: Map<string, Exercise>): MuscleGroup | undefined {
+  const muscle = exercises.get(id)?.muscle;
+  return muscle && groupOf(muscle);
+}
 
 /**
- * The types a workout counts as, in the order they first appear in it. Short of time, people combine
- * two workouts rather than skip one, so a combined day is both of them and not a third type. Helpers
- * count, so a deadlift also trains legs. With none of chest, back and legs: the group it trained most.
+ * The groups a workout trained, in the order they first appear in it. Helpers count, so a deadlift
+ * also trains legs. With none of chest, back and legs: the group it trained most.
  */
 function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise>): MuscleGroup[] {
   const done = workout.exerciseIds.flatMap((id) => {
@@ -93,23 +113,51 @@ function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise
   return leading ? [leading] : [];
 }
 
-/** The history as the rotation reads it: a combined day is its types in turn, each with that day's date. */
-function rotationOrder(workouts: RotationWorkout[], exercises: Map<string, Exercise>): { keys: string[]; dates: string[] } {
+/**
+ * The types each workout counts as. Short of time, people combine two workouts rather than skip one,
+ * so a combined day is both of them and not a third type. But groups trained together on most of the
+ * days either is trained are one type, because that's how this person splits their week. Only a
+ * group's own exercises show that: a deadlift doesn't pair back with legs.
+ */
+function dayTypes(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[][] {
+  const days = workouts.map((workout) => workoutGroups(workout, exercises));
+  const recent = days
+    .map((groups, i) => groups.filter((group) => workouts[i].exerciseIds.some((id) => exerciseGroup(id, exercises) === group)))
+    .slice(-HABIT_LOOKBACK);
+  const together = (a: MuscleGroup, b: MuscleGroup) =>
+    isHabit(recent.filter((day) => day.includes(a) && day.includes(b)).length, recent.filter((day) => day.includes(a) || day.includes(b)).length);
+  return days.map((groups) => {
+    const parts: MuscleGroup[][] = [];
+    for (const group of groups) {
+      const part = parts.find((joined) => joined.some((other) => together(other, group)));
+      if (part) part.push(group);
+      else parts.push([group]);
+    }
+    return parts.map((part) => part.sort((a, b) => ROTATION_GROUPS.indexOf(a) - ROTATION_GROUPS.indexOf(b)).join(TYPE_JOIN));
+  });
+}
+
+/**
+ * The history as the rotation reads it: a combined day is its types in turn, each with that day's
+ * date. Half of a joined type on its own is left out: the rotation goes by the split as it is now.
+ */
+function rotationOrder(workouts: RotationWorkout[], types: string[][]): { keys: string[]; dates: string[] } {
+  const joined = [...new Set(types.flat())].filter((key) => key.includes(TYPE_JOIN)).flatMap(typeGroups);
   const keys: string[] = [];
   const dates: string[] = [];
-  for (const workout of workouts) {
-    const groups = workoutGroups(workout, exercises);
-    for (const key of groups.length ? groups : ['']) {
+  workouts.forEach((workout, i) => {
+    for (const key of types[i].length ? types[i] : ['']) {
+      if (joined.includes(key as MuscleGroup)) continue;
       keys.push(key);
       dates.push(workout.date);
     }
-  }
+  });
   return { keys, dates };
 }
 
 /** The rotation's keys: one per type a workout counts as, or '' with no known exercises. */
 export function rotationKeys(workouts: RotationWorkout[], exercises: Map<string, Exercise>): string[] {
-  return rotationOrder(workouts, exercises).keys;
+  return rotationOrder(workouts, dayTypes(workouts, exercises)).keys;
 }
 
 /** Keys seen more than once. */
@@ -216,7 +264,7 @@ function typeReason(keys: string[], key: string): TypeReason | null {
 /** The exercise a workout is built around: the first worked one of its type, so a warm-up doesn't count. */
 function leadOf(workout: RotationWorkout, key: string, exercises: Map<string, Exercise>): string {
   const main = workedExercises(workout, exercises);
-  return main.find((id) => groupOf(exercises.get(id)!.muscle) === key) ?? main[0];
+  return main.find((id) => typeGroups(key).includes(groupOf(exercises.get(id)!.muscle))) ?? main[0];
 }
 
 /** A workout as a plan for `key` reads it. */
@@ -230,26 +278,40 @@ interface TypeWorkout extends RotationWorkout {
  * go and fillers stay. If nothing of this type's own is there, as when legs came only from a
  * deadlift, the whole day stands, because that's what trained it.
  */
-function workoutsOfType(workouts: RotationWorkout[], groups: MuscleGroup[][], key: string, exercises: Map<string, Exercise>): TypeWorkout[] {
+function workoutsOfType(workouts: RotationWorkout[], types: string[][], key: string, exercises: Map<string, Exercise>): TypeWorkout[] {
+  const own = typeGroups(key);
   return workouts.flatMap((workout, i) => {
-    if (!groups[i].includes(key as MuscleGroup)) return [];
-    const others = groups[i].filter((group) => group !== key);
-    const muscleGroup = (id: string) => {
-      const muscle = exercises.get(id)?.muscle;
-      return muscle && groupOf(muscle);
-    };
-    const hasOwn = workout.exerciseIds.some((id) => muscleGroup(id) === key);
-    const exerciseIds = hasOwn ? workout.exerciseIds.filter((id) => !others.some((group) => group === muscleGroup(id))) : workout.exerciseIds;
+    if (!types[i].includes(key)) return [];
+    const others = types[i].filter((type) => type !== key).flatMap(typeGroups);
+    const inGroups = (id: string, groups: MuscleGroup[]) => groups.some((group) => group === exerciseGroup(id, exercises));
+    const hasOwn = workout.exerciseIds.some((id) => inGroups(id, own));
+    const exerciseIds = hasOwn ? workout.exerciseIds.filter((id) => !inGroups(id, others)) : workout.exerciseIds;
     return [{ ...workout, exerciseIds, combined: others.length > 0 }];
   });
 }
 
+/**
+ * The muscles outside a type's own groups that most of its recent days trained, most often first:
+ * shoulders with legs, say. They're part of that day, not fillers. Cardio is too often a warm-up
+ * to say what a day is.
+ */
+function partnerMuscles(days: RotationWorkout[], key: string, exercises: Map<string, Exercise>): Muscle[] {
+  const recent = days.slice(-TYPE_LOOKBACK);
+  const counts = new Map<Muscle, number>();
+  for (const day of recent) {
+    for (const muscle of new Set(workedExercises(day, exercises).map((id) => exercises.get(id)!.muscle))) {
+      if (muscle !== 'cardio' && !typeGroups(key).includes(groupOf(muscle))) counts.set(muscle, (counts.get(muscle) ?? 0) + 1);
+    }
+  }
+  return [...counts].filter(([, n]) => isHabit(n, recent.length)).sort((a, b) => b[1] - a[1]).map(([muscle]) => muscle);
+}
+
 /** What the user does in this type, or after the main lifts in another: longest ago first. */
-function borrowableExercises(workouts: RotationWorkout[], groups: MuscleGroup[][], key: string, exercises: Map<string, Exercise>): string[] {
+function borrowableExercises(workouts: RotationWorkout[], types: string[][], key: string, exercises: Map<string, Exercise>): string[] {
   const lastUsed = new Map<string, string>();
   workouts.forEach((workout, i) => {
     workedExercises(workout, exercises).forEach((id, at) => {
-      if (groups[i].includes(key as MuscleGroup) || at >= ANCHORS) lastUsed.set(id, workout.date);
+      if (types[i].includes(key) || at >= ANCHORS) lastUsed.set(id, workout.date);
     });
   });
   return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
@@ -307,13 +369,13 @@ function variantReason(workouts: RotationWorkout[], leads: string[], lead: strin
 export function planNextType(workouts: RotationWorkout[], exercises: Map<string, Exercise>, pace?: RotationPace, pick: NextPick = {}): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
-  const { keys, dates } = rotationOrder(usable, exercises);
+  const types = dayTypes(usable, exercises);
+  const { keys, dates } = rotationOrder(usable, types);
   const suggestedKey = pace ? overdueKey(keys, dates, pace) : nextKey(keys);
   if (suggestedKey === null) return null;
   const key = pick.type && keys.includes(pick.type) ? pick.type : suggestedKey;
 
-  const groups = usable.map((workout) => workoutGroups(workout, exercises));
-  const ofType = workoutsOfType(usable, groups, key, exercises).slice(-TYPE_LOOKBACK);
+  const ofType = workoutsOfType(usable, types, key, exercises).slice(-TYPE_LOOKBACK);
   const leads = variantLeads(ofType, key, exercises);
   const suggested = nextVariant(leads) ?? leads[leads.length - 1];
   const variant = pick.lead && leads.includes(pick.lead) ? pick.lead : suggested;
@@ -348,17 +410,36 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
     if (!chosen.includes(id)) chosen.push(id);
   }
 
+  const partners: Record<string, Muscle[]> = {};
+  for (const type of new Set(keys.filter(Boolean))) partners[type] = partnerMuscles(workoutsOfType(usable, types, type, exercises), type, exercises);
+  const dayPartners = partners[key] ?? [];
+
+  // A day that skipped a partner shouldn't teach the plan to skip it too. This goes by the variant:
+  // one that never has the partner is meant that way.
+  const muscleOf = (id: string) => exercises.get(id)?.muscle;
+  const usedInVariant = [...scope].reverse().flatMap((w) => w.exerciseIds);
+  for (const muscle of partnerMuscles(scope, key, exercises)) {
+    const id = usedInVariant.find((candidate) => muscleOf(candidate) === muscle);
+    if (id === undefined || chosen.some((c) => muscleOf(c) === muscle)) continue;
+    const fillers = chosen.flatMap((c, at) => (kept.includes(c) || dayPartners.includes(muscleOf(c)!) ? [] : [at]));
+    if (chosen.length >= size && fillers.length) chosen[fillers[fillers.length - 1]] = id;
+    else if (chosen.length < MAX_EXERCISES) chosen.push(id);
+  }
+
+  const onOwnDays = new Set(ofType.map((w) => w.id));
   const fit = fitWeek(
     {
       exerciseIds: chosen,
       anchors: [...new Set([...kept, variant])],
-      type: key,
+      groups: typeGroups(key),
+      partners: dayPartners,
+      elsewhere: Object.entries(partners).flatMap(([type, muscles]) => (type === key ? [] : muscles)),
       size,
       min: MIN_EXERCISES,
       pool,
-      borrowable: borrowableExercises(usable, groups, key, exercises),
+      borrowable: borrowableExercises(usable, types, key, exercises),
     },
-    pace ? muscleBudgets(workouts, exercises, pace.today) : new Map(),
+    pace ? muscleBudgets(workouts, exercises, pace.today, (workout, muscle) => onOwnDays.has(workout.id) && dayPartners.includes(muscle)) : new Map(),
     exercises,
   );
 
@@ -373,6 +454,7 @@ export function planNextType(workouts: RotationWorkout[], exercises: Map<string,
     exerciseIds: fit.exerciseIds,
     leftOut: fit.leftOut,
     added: fit.added,
+    partners,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,
     otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),
     reason: variant === suggested ? variantReason(ofType, leads, variant, key, exercises) : null,

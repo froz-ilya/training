@@ -30,7 +30,9 @@ const exercises = new Map(
     ex('facePull', 'shoulders', ['back']),
     ex('pushdown', 'triceps'),
     ex('dips', 'triceps', ['chest', 'shoulders']),
+    ex('extension', 'triceps'),
     ex('curl', 'biceps'),
+    ex('hammer', 'biceps'),
     ex('crunch', 'abs'),
     ex('wrist', 'forearms'),
   ].map((e) => [e.id, e]),
@@ -58,6 +60,15 @@ const BACK = { row: 3, pull: 3, pulldown: 3 };
 const LEGS = { squat: 3, legPress: 3, legCurl: 3 };
 const BACK_LEGS = { row: 3, pull: 3, squat: 3, legPress: 3 };
 const LEGS_BACK = { squat: 3, legPress: 3, row: 3, pull: 3 };
+const CHEST_BACK = { bench: 3, incline: 3, row: 3 };
+const BACK_CHEST = { row: 3, pull: 3, bench: 3 };
+const LEGS_SHOULDERS = { squat: 3, legPress: 3, overhead: 3, lateral: 3 };
+const BACK_BICEPS = { row: 3, pull: 3, curl: 3, hammer: 3 };
+const CHEST_TRICEPS = { bench: 3, incline: 3, pushdown: 3, extension: 3 };
+
+/** Legs and shoulders, back and biceps, chest and triceps, in turn. */
+const split = (count: number) => Array.from({ length: count }, (_, i) => [LEGS_SHOULDERS, BACK_BICEPS, CHEST_TRICEPS][i % 3]);
+const repeat = <T>(count: number, days: T[]): T[] => Array.from({ length: count }, () => days).flat();
 
 describe('what a workout counts as', () => {
   it('counts a combined day as both, in the order they first appear', () => {
@@ -144,7 +155,7 @@ describe('a combined day in the rotation', () => {
   });
 
   it('counts for both types in the rotation’s length', () => {
-    expect(rotationTypeCount(series([BACK_LEGS, BACK_LEGS]), exercises)).toBe(2);
+    expect(rotationTypeCount(series([BACK_LEGS, LEGS, BACK]), exercises)).toBe(2);
   });
 
   it('keeps dates in step, so a combined type is not called overdue', () => {
@@ -171,16 +182,16 @@ describe('planning from a combined day', () => {
   const withLegs = (legs: Record<string, number>[]) => series(legs.flatMap((d) => [d, CHEST, BACK]));
 
   it('takes only this type’s exercises from a combined day', () => {
-    const plan = planNextType(series([CHEST, BACK_LEGS, CHEST, BACK_LEGS, CHEST]), exercises)!;
+    const plan = planNextType(series([CHEST, BACK_LEGS, CHEST]), exercises)!;
     expect(plan.key).toBe('back');
     expect(plan.exerciseIds).toEqual(['row', 'pull']);
-    const legs = planNextType(series([CHEST, BACK_LEGS, CHEST, BACK_LEGS, CHEST]), exercises, undefined, { type: 'legs' })!;
+    const legs = planNextType(series([CHEST, BACK_LEGS, CHEST]), exercises, undefined, { type: 'legs' })!;
     expect(legs.exerciseIds).toEqual(['squat', 'legPress']);
   });
 
   it('keeps fillers from a combined day', () => {
     const combined = { row: 4, pull: 4, squat: 4, legPress: 4, crunch: 3 };
-    const plan = planNextType(series([CHEST, combined, CHEST, combined, CHEST]), exercises, undefined, { type: 'legs' })!;
+    const plan = planNextType(series([CHEST, combined, CHEST]), exercises, undefined, { type: 'legs' })!;
     expect(plan.exerciseIds).toEqual(['squat', 'legPress', 'crunch']);
   });
 
@@ -192,7 +203,7 @@ describe('planning from a combined day', () => {
   });
 
   it('leads a variant on the type’s own first exercise', () => {
-    const list = series([CHEST, BACK_LEGS, CHEST, LEGS_BACK]);
+    const list = series([BACK, LEGS, BACK_LEGS, LEGS, BACK, LEGS_BACK]);
     const plan = planNextType(list, exercises, undefined, { type: 'back' })!;
     expect(plan.otherLeads).toEqual([]);
     expect(plan.exerciseIds[0]).toBe('row');
@@ -232,5 +243,125 @@ describe('planning from a combined day', () => {
     list.push(on(6, CHEST), on(3, { row: 3, pull: 3, squat: 3, legPress: 3, wrist: 3 }));
     const plan = planNextType(list, exercises, { today, perWeek: 2 }, { type: 'chest' })!;
     expect(plan.leftOut).toEqual(['wrist']);
+  });
+});
+
+describe('groups trained together out of habit', () => {
+  it('makes them one type', () => {
+    const list = series(repeat(4, [CHEST_BACK]));
+    expect(rotationKeys(list, exercises)).toEqual(repeat(4, ['chest+back']));
+    expect(rotationTypeCount(list, exercises)).toBe(1);
+  });
+
+  it('plans the whole day, and needs no reason with nothing else to choose', () => {
+    const plan = planNextType(series(repeat(4, [CHEST_BACK])), exercises)!;
+    expect(plan.key).toBe('chest+back');
+    expect(plan.exerciseIds).toEqual(['bench', 'incline', 'row']);
+    expect(plan.typeReason).toBeNull();
+    expect(plan.otherTypes).toEqual([]);
+  });
+
+  it('is the same type in either order', () => {
+    expect(new Set(rotationKeys(series(repeat(2, [CHEST_BACK, BACK_CHEST])), exercises))).toEqual(new Set(['chest+back']));
+  });
+
+  it('rotates with the rest of the split', () => {
+    const plan = planNextType(series(repeat(3, [CHEST_BACK, LEGS])), exercises)!;
+    expect(plan.key).toBe('chest+back');
+    expect(plan.typeReason?.types).toEqual(['chest+back', 'legs', 'chest+back']);
+    const after = planNextType(series([...repeat(3, [CHEST_BACK, LEGS]), CHEST_BACK]), exercises)!;
+    expect(after.key).toBe('legs');
+    expect(after.otherTypes).toEqual(['chest+back']);
+  });
+
+  it('leaves other types out of the day’s plan', () => {
+    const allThree = { flyes: 3, row: 3, legCurl: 3 };
+    const list = series([...repeat(3, [CHEST_BACK, LEGS]), allThree]);
+    expect(rotationKeys(list, exercises).slice(-2)).toEqual(['chest+back', 'legs']);
+    const plan = planNextType(list, exercises, undefined, { type: 'chest+back' })!;
+    expect(plan.exerciseIds).not.toContain('legCurl');
+  });
+
+  it('needs more than half the days', () => {
+    expect(rotationKeys(series([CHEST_BACK, CHEST_BACK, CHEST, BACK]), exercises).slice(0, 2)).toEqual(['chest', 'back']);
+  });
+
+  it('needs more than one day', () => {
+    expect(rotationKeys(series([CHEST_BACK]), exercises)).toEqual(['chest', 'back']);
+  });
+
+  it('does not pair a group that only helped', () => {
+    expect(rotationKeys(series(repeat(3, [{ deadlift: 6 }])), exercises)).toEqual(repeat(3, ['back', 'legs']));
+  });
+
+  it('follows a change to a combined split, without the old types', () => {
+    const list = series([...repeat(8, [CHEST, BACK]), ...repeat(12, [CHEST_BACK])]);
+    expect(new Set(rotationKeys(list, exercises))).toEqual(new Set(['chest+back']));
+    expect(planNextType(list, exercises)?.exerciseIds).toEqual(['bench', 'incline', 'row']);
+  });
+
+  it('lets go of a split that ended', () => {
+    const list = series([...repeat(6, [CHEST_BACK]), ...repeat(6, [CHEST, BACK])]);
+    expect(new Set(rotationKeys(list, exercises))).toEqual(new Set(['chest', 'back']));
+  });
+});
+
+describe('muscles a type’s days usually train', () => {
+  const after = { today: '2026-03-02', perWeek: 3 };
+
+  it('are named per type, from any split', () => {
+    expect(planNextType(series(split(9)), exercises)?.partners).toEqual({ legs: ['shoulders'], back: ['biceps'], chest: ['triceps'] });
+  });
+
+  it('start with the second day', () => {
+    expect(planNextType(series(split(3)), exercises)?.partners).toEqual({ legs: [], back: [], chest: [] });
+    expect(planNextType(series(split(6)), exercises)?.partners.legs).toEqual(['shoulders']);
+  });
+
+  it('need more than half of the type’s days', () => {
+    const days = [LEGS_SHOULDERS, CHEST, LEGS, BACK];
+    expect(planNextType(series(repeat(2, days)), exercises)?.partners.legs).toEqual([]);
+  });
+
+  it('do not include cardio', () => {
+    const treadmill = ex('treadmill', 'cardio');
+    const known = new Map([...exercises, [treadmill.id, treadmill]]);
+    expect(planNextType(series(repeat(3, [{ treadmill: 1, ...CHEST }])), known)?.partners.chest).toEqual([]);
+  });
+
+  it.each([2, 3])('stay in the plan with a workout every %i days', (gap) => {
+    for (const count of [30, 28, 29]) {
+      const plan = planNextType(series(split(count), '2026-02-28', gap), exercises, { today: '2026-03-02', perWeek: gap === 2 ? 3 : 2 })!;
+      expect(plan.leftOut).toEqual([]);
+      expect(plan.added).toEqual([]);
+      expect(plan.exerciseIds).toHaveLength(4);
+    }
+  });
+
+  it('do not move to another day because the week is short of them', () => {
+    const list = series(split(29), '2026-02-28', 3);
+    for (const type of ['legs', 'back', 'chest']) {
+      const plan = planNextType(list, exercises, { today: '2026-03-02', perWeek: 2 }, { type })!;
+      const muscles = plan.exerciseIds.map((id) => exercises.get(id)?.muscle);
+      expect(plan.added).toEqual([]);
+      expect(new Set(muscles).size).toBe(2);
+    }
+  });
+
+  it('come back after a day that skipped them', () => {
+    const days: Record<string, number>[] = split(9);
+    days[6] = { squat: 3, legPress: 3, legCurl: 3, legExtension: 3 };
+    const plan = planNextType(series(days), exercises, after)!;
+    expect(plan.key).toBe('legs');
+    expect(plan.exerciseIds).toHaveLength(4);
+    expect(plan.exerciseIds.slice(0, 3)).toEqual(['squat', 'legPress', 'legCurl']);
+    expect(exercises.get(plan.exerciseIds[3])?.muscle).toBe('shoulders');
+  });
+
+  it('come with a joined type too', () => {
+    const plan = planNextType(series(repeat(3, [{ ...CHEST_BACK, curl: 3 }])), exercises)!;
+    expect(plan.key).toBe('chest+back');
+    expect(plan.partners['chest+back']).toEqual(['biceps']);
+    expect(plan.exerciseIds).toContain('curl');
   });
 });

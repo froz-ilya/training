@@ -48,6 +48,8 @@ function weeks(count: number, chest: (week: number) => string[], back: (week: nu
 }
 
 const WEEKS = 8;
+/** On every other chest day, week 0 included: a filler, since half the days isn't a habit. */
+const everyOther = (week: number) => (week % 2 ? [] : ['wrist']);
 
 describe('weekly budget', () => {
   it('swaps a filler already done this week for one that is due', () => {
@@ -66,7 +68,7 @@ describe('weekly budget', () => {
   });
 
   it('leaves the slot out when nothing can take it', () => {
-    const plan = planNextType(weeks(WEEKS, () => [...MAIN, 'cable', 'wrist']), exercises, pace)!;
+    const plan = planNextType(weeks(WEEKS, (w) => [...MAIN, 'cable', ...everyOther(w)]), exercises, pace)!;
     expect(plan.exerciseIds).toEqual([...MAIN, 'cable']);
     expect(plan.leftOut).toEqual(['wrist']);
     expect(plan.added).toEqual([]);
@@ -96,7 +98,7 @@ describe('weekly budget', () => {
   });
 
   it('brings in a due small muscle that the user does as a filler elsewhere', () => {
-    const list = weeks(WEEKS, () => [...MAIN, 'wrist'], (w) => (w === 0 ? BACK : [...BACK, 'crunch']));
+    const list = weeks(WEEKS, (w) => [...MAIN, ...everyOther(w)], (w) => (w % 2 ? [...BACK, 'crunch'] : BACK));
     const plan = planNextType(list, exercises, pace)!;
     expect(plan.exerciseIds).toEqual([...MAIN, 'crunch']);
     expect(plan.leftOut).toEqual(['wrist']);
@@ -104,13 +106,13 @@ describe('weekly budget', () => {
   });
 
   it('chooses the exercise used longest ago', () => {
-    const back = (w: number) => (w === 0 ? BACK : [...BACK, w % 2 ? 'crunch' : 'legRaise']);
-    const plan = planNextType(weeks(WEEKS, () => [...MAIN, 'wrist'], back), exercises, pace)!;
+    const back = (w: number) => (w % 2 ? [...BACK, w % 4 === 1 ? 'crunch' : 'legRaise'] : BACK);
+    const plan = planNextType(weeks(WEEKS, (w) => [...MAIN, ...everyOther(w)], back), exercises, pace)!;
     expect(plan.exerciseIds).toEqual([...MAIN, 'legRaise']);
   });
 
   it('does not borrow what the user only does as a main lift elsewhere', () => {
-    const list = weeks(WEEKS, () => [...MAIN, 'wrist'], (w) => (w === 0 ? BACK : ['row', 'crunch', 'pull', 'pulldown']));
+    const list = weeks(WEEKS, (w) => [...MAIN, ...everyOther(w)], (w) => (w % 2 ? ['row', 'crunch', 'pull', 'pulldown'] : BACK));
     const plan = planNextType(list, exercises, pace)!;
     expect(plan.exerciseIds).toEqual(MAIN);
     expect(plan.added).toEqual([]);
@@ -156,7 +158,7 @@ describe('weekly budget', () => {
   });
 
   it('respects the budget after a switch to another type', () => {
-    const list = weeks(WEEKS, () => MAIN, () => [...BACK, 'wrist']);
+    const list = weeks(WEEKS, () => MAIN, (w) => [...BACK, ...everyOther(w)]);
     expect(planNextType(list, exercises, pace)?.key).toBe('chest');
     const plan = planNextType(list, exercises, pace, { type: 'back' })!;
     expect(plan.exerciseIds).toEqual(BACK);
@@ -164,9 +166,29 @@ describe('weekly budget', () => {
   });
 
   it('can take a plan down to the minimum', () => {
-    const plan = planNextType(weeks(WEEKS, () => [...MAIN, 'wrist']), exercises, pace)!;
+    const plan = planNextType(weeks(WEEKS, (w) => [...MAIN, ...everyOther(w)]), exercises, pace)!;
     expect(plan.exerciseIds).toEqual(MAIN);
     expect(plan.leftOut).toEqual(['wrist']);
+  });
+
+  it('keeps what a type’s days usually train, however soon that day comes round', () => {
+    const plan = planNextType(weeks(WEEKS, () => [...MAIN, 'cable', 'wrist']), exercises, pace)!;
+    expect(plan.exerciseIds).toEqual([...MAIN, 'cable', 'wrist']);
+    expect(plan.leftOut).toEqual([]);
+  });
+
+  it('leaves that out too when other days had its week’s worth', () => {
+    const list = weeks(WEEKS, () => [...MAIN, 'wrist'], (w) => (w === 0 ? [...BACK, 'wrist'] : BACK));
+    const plan = planNextType(list, exercises, pace)!;
+    expect(plan.exerciseIds).toEqual(MAIN);
+    expect(plan.leftOut).toEqual(['wrist']);
+  });
+
+  it('does not bring in a muscle that has its own day elsewhere', () => {
+    const list = weeks(WEEKS, (w) => [...MAIN, ...everyOther(w)], (w) => (w === 0 ? BACK : [...BACK, 'crunch']));
+    const plan = planNextType(list, exercises, pace)!;
+    expect(plan.exerciseIds).toEqual(MAIN);
+    expect(plan.added).toEqual([]);
   });
 
   describe('usual count', () => {

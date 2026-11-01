@@ -9,7 +9,7 @@ import type { Baseline, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallA
 import { bodyLoad, type BodyLoad } from './balance';
 import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
-import { planNextType, rotationTypeCount, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
+import { planNextType, rotationTypeCount, typeGroups, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
 import { alternateRange, lighterWeekActive, resolveOutcomes } from './plateau';
 import { countRecent, groupSummaries, type GroupSummary, type Overview } from './overview';
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
@@ -340,16 +340,25 @@ export async function loadProgress(): Promise<ProgressData> {
   };
 }
 
-export interface NextWorkout {
-  /** What it trains, for workoutTitle(). */
+/** A rotation type, for typeTitle(). `key` is what switches to it. */
+export interface TypeName {
+  key: string;
   groups: MuscleGroup[];
+  partners: Muscle[];
+}
+
+export interface NextWorkout {
+  /** What it trains, for typeTitle(). */
+  groups: MuscleGroup[];
+  /** The muscles in it that this type's days usually train too. */
+  partners: Muscle[];
   exercises: { exercise: Exercise; sets: SetPlan[]; suggestion: Suggestion | null }[];
   /** How this week is going against the user's usual number of workouts. */
   week: WeekProgress;
   /** Why this type, when the rotation chose between several. */
-  typeReason: { kind: TypeReason['kind']; types: MuscleGroup[] } | null;
+  typeReason: { kind: TypeReason['kind']; types: TypeName[] } | null;
   /** The rotation's other types, to switch to. */
-  otherTypes: MuscleGroup[];
+  otherTypes: TypeName[];
   /** Why this variant of the type, when the rotation chose between several. */
   reason: { kind: VariantReason['kind']; after: Exercise; lead: Exercise } | null;
   /** The lead exercises of the type's other variants, to switch to. */
@@ -396,8 +405,10 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const dates = [...workouts.values()].map((w) => w.date);
   const reason = plan.reason && { kind: plan.reason.kind, after: exercises.get(plan.reason.after)!, lead: exercises.get(plan.reason.lead)! };
   const otherVariants = plan.otherLeads.map((id) => exercises.get(id)!);
-  const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types as MuscleGroup[] };
-  return { groups, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes as MuscleGroup[], reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added };
+  const typeName = (key: string): TypeName => ({ key, groups: typeGroups(key), partners: plan.partners[key] ?? [] });
+  const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types.map(typeName) };
+  const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added };
 }
 
 // ---------- Saving ----------

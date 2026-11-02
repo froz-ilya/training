@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Exercise, StallRecord } from '../types';
 import { nextKey, overdueKey, planNextType, rotationKeys, rotationTypeCount, type RotationWorkout } from './next';
-import { alternateRange, atRotationLimit, plateauOptions, resolveOutcomes, stallOutcome } from './plateau';
+import { alternateRange, atRotationLimit, plateauOptions, resolveOutcomes, similarExercises, stallOutcome } from './plateau';
 import { beatsAcrossSets, compareExercise, compareSet, pairSets } from './compare';
 import { expectedGapDays, weekProgress, weeklyFrequency } from './frequency';
 import { adjustPoints, DEFAULT_POSITION_COST, entryRanks, learnPositionCost, positionFactor } from './position';
@@ -565,6 +565,13 @@ describe('plateaus', () => {
     action,
     date,
     helped,
+  });
+
+  it('offers no similar exercise the user doesn’t want suggested', () => {
+    const similar = (id: string): Exercise => ({ id, names: { en: id, de: id, ru: id }, muscle: 'legs', equipment: 'machine', load: 'weight', compound: true });
+    const [own, ...others] = ['a', 'b', 'c'].map(similar);
+    expect(similarExercises(own, [own, ...others])).toEqual(others);
+    expect(similarExercises(own, [own, ...others], 3, new Set(['b']))).toEqual([others[1]]);
   });
 
   it('keeps a lighter week low by default', () => {

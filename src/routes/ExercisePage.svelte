@@ -267,6 +267,28 @@
             </button>
           </div>
         </div>
+        <div class="field">
+          <span class="label" id="suggestions">{t('exercise.setting.suggestions')}</span>
+          <div class="segmented" role="group" aria-labelledby="suggestions">
+            <button
+              class:active={!view.setting?.avoid}
+              aria-pressed={!view.setting?.avoid}
+              onclick={() => view?.setting?.avoid && saveExerciseSettings(view.exercise.id, { avoid: undefined })}
+            >
+              {t('exercise.suggest.yes')}
+            </button>
+            <button
+              class:active={!!view.setting?.avoid}
+              aria-pressed={!!view.setting?.avoid}
+              onclick={() => view && saveExerciseSettings(view.exercise.id, { avoid: true })}
+            >
+              {t('exercise.suggest.no')}
+            </button>
+          </div>
+          {#if view.setting?.avoid}
+            <p class="muted small flat avoided">{t('exercise.suggest.avoided')}</p>
+          {/if}
+        </div>
       </div>
     </div>
 
@@ -328,6 +350,9 @@
   }
   .flat {
     margin: 0;
+  }
+  .avoided {
+    margin-left: 4px;
   }
   .tiles {
     display: grid;

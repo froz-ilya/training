@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
-  import { chooseStallAction, undoStallAction, type ExerciseView } from '../../lib/coach/data';
+  import { avoidedExercises, chooseStallAction, undoStallAction, type ExerciseView } from '../../lib/coach/data';
   import { atRotationLimit, plateauOptions, similarExercises } from '../../lib/coach/plateau';
   import { actionLabel, actionText, rotationLimitText } from '../../lib/coach/text';
   import { fmtDate } from '../../lib/dates';
@@ -16,8 +16,10 @@
   const latest = (action: StallAction) =>
     view.records.filter((r) => r.action === action).sort((a, b) => b.date.localeCompare(a.date))[0];
   let exercises = $state<Exercise[]>([]);
+  let avoided = $state.raw<ReadonlySet<string>>(new Set());
   void allExercises().then((all) => (exercises = all));
-  const similar = $derived(similarExercises(view.exercise, exercises));
+  void avoidedExercises().then((list) => (avoided = new Set(list.map((e) => e.id))));
+  const similar = $derived(similarExercises(view.exercise, exercises, 3, avoided));
 </script>
 
 <div class="section">

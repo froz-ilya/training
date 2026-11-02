@@ -73,6 +73,8 @@ export interface FocusPlan {
   recent: string[];
   /** What they did before that, longest ago first. */
   older: string[];
+  /** Exercises the user doesn't want suggested. */
+  avoid?: ReadonlySet<string>;
 }
 
 export interface FocusFit {
@@ -102,7 +104,7 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     regionRange(region, 'focus').low - setsOf(week, region) - PLANNED_SETS * exerciseIds.filter((id) => mainOf(id).includes(region)).length;
   const joins = (muscle: Muscle) => plan.groups.includes(groupOf(muscle)) || plan.partners.includes(muscle) || ANY_DAY.includes(muscle);
   const canPick = (id: string, region: BodyRegion) =>
-    mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && joins(muscleOf(id));
+    mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && !plan.avoid?.has(id) && joins(muscleOf(id));
   /** The last filler, or better, the last one for a muscle that's only being held. */
   const fillerToSwap = () => {
     const fillers = exerciseIds.filter(

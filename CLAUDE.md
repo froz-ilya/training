@@ -114,6 +114,10 @@ migration that is tested.
   tag ids are in src/lib/notes/tags.ts and never change; a user's own tags are in
   `settings.customTags`. A session with an off-day tag doesn't count against an exercise, but a new
   best in it still counts, and `pain` blocks an increase at the next session.
+- Avoided exercises: `avoid` in `exerciseSettings` means the coach never suggests the exercise, while the
+  user can still add it by hand. History, the rotation and Progress keep reading it. A plan swaps it for a
+  stand-in (src/lib/coach/standIn.ts) that trains the same main region, what the user has done first, or
+  drops it if nothing fits. Anything new that suggests an exercise has to leave avoided ones out.
 
 ## Interface language
 

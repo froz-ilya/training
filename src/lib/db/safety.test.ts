@@ -365,6 +365,30 @@ describe('normalizeTables', () => {
     expect(tables.stallRecords).toHaveLength(1);
     expect(tables.exerciseSettings).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
   });
+
+  it('keeps the avoid mark on an exercise setting, and adds none to a row without it', () => {
+    const [marked, plain, off] = normalizeTables({
+      exerciseSettings: [
+        { exerciseId: 'barbell-squat', avoid: true },
+        { exerciseId: 'plank', repLow: 6 },
+        { exerciseId: 'deadlift', avoid: false },
+      ],
+    }).exerciseSettings as Record<string, unknown>[];
+    expect(marked).toEqual({ exerciseId: 'barbell-squat', avoid: true });
+    expect('avoid' in plain).toBe(false);
+    expect(off.avoid).toBe(false);
+  });
+
+  it.each([['text', 'yes'], ['a number', 1], ['nothing', null], ['a list', []]])('drops an avoid mark holding %s and keeps the rest of the row', (_, avoid) => {
+    const tables = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', repLow: 6, avoid }] });
+    expect(tables.exerciseSettings).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
+    expect(droppedRows({ exerciseSettings: [{ exerciseId: 'plank', avoid }] }, tables)).toBe(0);
+  });
+
+  it('leaves nothing of an avoid mark that was turned off', () => {
+    const [row] = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', avoid: undefined }] }).exerciseSettings as object[];
+    expect('avoid' in row).toBe(false);
+  });
 });
 
 describe('isDay', () => {

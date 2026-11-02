@@ -164,6 +164,8 @@ export interface ExerciseSettings {
   repLow?: number;
   repHigh?: number;
   goal?: ExerciseGoal;
+  /** The coach doesn't suggest it. The user can still add it to a workout. */
+  avoid?: boolean;
 }
 
 /** A weigh-in. A day holds one: weighing in again replaces it. */

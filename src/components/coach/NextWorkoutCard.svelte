@@ -95,15 +95,18 @@
       {#each plan.exercises as item (item.exercise.id)}
         {@const top = topOf(item.sets)}
         <li>
-          <span class="name">{nameOf(item.exercise)}</span>
+          <a class="name" href="#/exercise/{encodeURIComponent(item.exercise.id)}">{nameOf(item.exercise)}</a>
           <span class="muted small">{top ? fmtPlanned(top, item.exercise.load) : t('coach.next.first')}</span>
         </li>
       {/each}
     </ul>
-    {#if plan.leftOut.length || plan.added.length || plan.focus.length}
+    {#if plan.leftOut.length || plan.added.length || plan.focus.length || plan.standIns.length}
       <div class="budget">
         {#each plan.focus as pick (pick.exercise.id)}
           <p class="muted small">{focusReason(pick)}</p>
+        {/each}
+        {#each plan.standIns as swap (swap.instead.id)}
+          <p class="muted small">{t(swap.fresh ? 'coach.next.standInNew' : 'coach.next.standIn', { name: nameOf(swap.exercise), old: nameOf(swap.instead) })}</p>
         {/each}
         {#if plan.leftOut.length}
           <p class="muted small">{t('coach.next.budget.leftOut', { names: plan.leftOut.map(nameOf).join(', ') })}</p>
@@ -176,7 +179,9 @@
   }
   .name {
     min-width: 0;
+    color: inherit;
     font-weight: 600;
+    text-decoration: none;
   }
   li .small {
     flex-shrink: 0;

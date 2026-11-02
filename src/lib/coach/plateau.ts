@@ -80,10 +80,10 @@ export function alternateRange(current: RepRange): RepRange {
   return current.low < 10 ? { low: 10, high: 14 } : { low: 5, high: 8 };
 }
 
-/** Exercises for the same muscle, the same kind of exercise first. */
-export function similarExercises(exercise: Exercise, all: Exercise[], limit = 3): Exercise[] {
+/** Exercises for the same muscle, the same kind of exercise first. None the user doesn't want suggested. */
+export function similarExercises(exercise: Exercise, all: Exercise[], limit = 3, avoid: ReadonlySet<string> = new Set()): Exercise[] {
   return all
-    .filter((e) => e.id !== exercise.id && e.muscle === exercise.muscle && e.load === exercise.load)
+    .filter((e) => e.id !== exercise.id && !avoid.has(e.id) && e.muscle === exercise.muscle && e.load === exercise.load)
     .sort((a, b) => Number(b.compound === exercise.compound) - Number(a.compound === exercise.compound))
     .slice(0, limit);
 }

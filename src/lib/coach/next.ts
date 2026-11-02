@@ -5,6 +5,7 @@ import { fitWeek, muscleBudgets, workedExercises } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
 import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
 import { expectedGapDays } from './frequency';
+import { replaceAvoided, type StandIn } from './standIn';
 
 /** A finished workout, newest last, as the rotation sees it. */
 export interface RotationWorkout {
@@ -54,6 +55,8 @@ export interface PlannedType {
   /** Muscles brought in because they're due this week. */
   added: Muscle[];
   focus: FocusPick[];
+  /** Exercises in the plan that take the place of an avoided one. */
+  standIns: StandIn[];
   /** The muscles usually trained with each type, which are part of what it's called. */
   partners: Record<string, Muscle[]>;
 }
@@ -381,11 +384,25 @@ function variantReason(workouts: RotationWorkout[], leads: string[], lead: strin
 }
 
 /**
+ * A variant's reason, told with what really leads today. A stand-in has no habit of coming next, and
+ * "after X, X" says nothing, so those go.
+ */
+function reasonWithLead(reason: VariantReason | null, lead: string | undefined): VariantReason | null {
+  if (!reason || lead === reason.lead) return reason;
+  return lead === undefined || reason.kind === 'again' || lead === reason.after ? null : { ...reason, lead };
+}
+
+/**
  * The next workout from the user's own rotation: the type's next variant, with the main lifts of
  * that variant's last workout kept and the remaining slots rotating through what they've done for it
  * recently. Same muscle first, then whatever was done longest ago. Those slots then fit the user's
  * week, which needs `pace` for today's date, and so do `goals`: see focus.ts. `pick` swaps the
- * suggested type or variant for another, and everything else then works the same. Null with no history.
+ * suggested type or variant for another, and everything else then works the same. Exercises in
+ * `avoid` are never planned: a stand-in takes their place, or they go. The rotation still reads them,
+ * because a day's type is a fact of the past. A variant with nothing left gives way to another of its
+ * type, and a suggested type with nothing left to the next in `otherTypes` that has something, with no
+ * `typeReason`, since that isn't why the rotation chose it. `otherTypes` leaves out what has nothing
+ * left. Null with no history, when nothing can be planned, or when a type picked has nothing left.
  */
 export function planNextType(
   workouts: RotationWorkout[],
@@ -393,6 +410,30 @@ export function planNextType(
   pace?: RotationPace,
   pick: NextPick = {},
   goals: Partial<Record<BodyRegion, RegionGoal>> = {},
+  avoid: ReadonlySet<string> = new Set(),
+): PlannedType | null {
+  const plan = (choice: NextPick) => planType(workouts, exercises, pace, choice, goals, avoid);
+  if (!avoid.size) return plan(pick);
+
+  const planned = (choice: NextPick): PlannedType | null => {
+    const base = plan(choice);
+    if (!base || base.exerciseIds.length) return base;
+    return base.otherLeads.map((lead) => plan({ type: base.key, lead })).find((other) => other?.exerciseIds.length) ?? null;
+  };
+  // The card keeps a lead chip's `lead` without a type, so it has to reach the type the chip was on.
+  const elsewhere = () => (plan(pick)?.otherTypes ?? []).map((type) => planned({ type, lead: pick.lead })).find(Boolean) ?? null;
+  const found = planned(pick) ?? (pick.type ? null : elsewhere());
+  return found && { ...found, otherTypes: found.otherTypes.filter((type) => planned({ type })) };
+}
+
+/** The plan for `pick`, as planNextType describes it. No exercises in it means `avoid` left none. */
+function planType(
+  workouts: RotationWorkout[],
+  exercises: Map<string, Exercise>,
+  pace: RotationPace | undefined,
+  pick: NextPick,
+  goals: Partial<Record<BodyRegion, RegionGoal>>,
+  avoid: ReadonlySet<string>,
 ): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
@@ -413,15 +454,19 @@ export function planNextType(
   // A combined day was cut short, so a full workout of the type makes the better base.
   const full = own.filter((w) => !w.combined);
   const latest = full.length ? full[full.length - 1] : own[own.length - 1];
-  const known = latest.exerciseIds.filter((id) => exercises.has(id));
+  const everDone = doneExercises(workouts, exercises);
+  const { exerciseIds: known, standIns } = replaceAvoided(latest.exerciseIds.filter((id) => exercises.has(id)), exercises, avoid, everDone);
+  const leadIn = (list: StandIn[]) => (avoid.has(variant) ? list.find((s) => s.instead === variant)?.exerciseId : variant);
   const sizes = scope.map((w) => w.exerciseIds.length).sort((a, b) => a - b);
   const size = Math.min(MAX_EXERCISES, Math.max(MIN_EXERCISES, sizes[Math.floor(sizes.length / 2)]));
 
   const kept = known.slice(0, Math.min(ANCHORS, known.length));
   const lastUsed = new Map<string, string>();
   for (const workout of scope) for (const id of workout.exerciseIds) lastUsed.set(id, workout.date);
+  // A stand-in has its slot already, so it can't also rotate into another one.
+  const open = (id: string) => !avoid.has(id) && !standIns.some((s) => s.exerciseId === id);
   const pool = [...lastUsed.keys()]
-    .filter((id) => exercises.has(id) && !kept.includes(id) && (!known.includes(id) || lastUsed.get(id) !== latest.date))
+    .filter((id) => exercises.has(id) && open(id) && !kept.includes(id) && (!known.includes(id) || lastUsed.get(id) !== latest.date))
     .sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
 
   const chosen = [...kept];
@@ -429,7 +474,9 @@ export function planNextType(
     if (chosen.length >= size) break;
     const muscle = exercises.get(id)?.muscle;
     const swap = pool.find((p) => !chosen.includes(p) && exercises.get(p)?.muscle === muscle);
-    chosen.push(swap ?? id);
+    // A combined day can leave a slot's own exercise in the pool, and an earlier slot may have taken it.
+    const next = swap ?? id;
+    if (!chosen.includes(next)) chosen.push(next);
   }
   // A shorter last workout than usual: top up from the pool.
   for (const id of pool) {
@@ -444,7 +491,7 @@ export function planNextType(
   // A day that skipped a partner shouldn't teach the plan to skip it too. This goes by the variant:
   // one that never has the partner is meant that way.
   const muscleOf = (id: string) => exercises.get(id)?.muscle;
-  const usedInVariant = [...scope].reverse().flatMap((w) => w.exerciseIds);
+  const usedInVariant = [...scope].reverse().flatMap((w) => w.exerciseIds).filter((id) => !avoid.has(id));
   for (const muscle of partnerMuscles(scope, key, exercises)) {
     const id = usedInVariant.find((candidate) => muscleOf(candidate) === muscle);
     if (id === undefined || chosen.some((c) => muscleOf(c) === muscle)) continue;
@@ -454,7 +501,8 @@ export function planNextType(
   }
 
   const onOwnDays = new Set(ofType.map((w) => w.id));
-  const anchors = [...new Set([...kept, variant])];
+  const lead = leadIn(standIns);
+  const anchors = [...new Set(lead === undefined ? kept : [...kept, lead])];
   const active = pace ? goals : {};
   const week = pace ? weekSets(workouts, exercises, pace.today) : new Map<BodyRegion, number>();
   const fit = fitWeek(
@@ -467,7 +515,7 @@ export function planNextType(
       size,
       min: MIN_EXERCISES,
       pool,
-      borrowable: borrowableExercises(usable, types, key, exercises),
+      borrowable: borrowableExercises(usable, types, key, exercises).filter((id) => !avoid.has(id)),
       enough: (id) => heldEnough(exercises.get(id)!, active, week),
       needed: (id) => trainsShortFocus(exercises.get(id)!, active, week),
     },
@@ -484,7 +532,8 @@ export function planNextType(
       leftOut: fit.leftOut,
       max: MAX_EXERCISES,
       recent,
-      older: doneExercises(workouts, exercises).filter((id) => !recent.includes(id)),
+      older: everDone.filter((id) => !recent.includes(id)),
+      avoid,
     },
     active,
     week,
@@ -494,20 +543,25 @@ export function planNextType(
   const regular = repeated(leads);
   const newestFirst = [...leads].reverse();
   const otherLeads = [...new Set([suggested, ...newestFirst.filter((l) => regular.includes(l)), ...newestFirst])]
-    .filter((l) => l !== variant)
+    .filter((l) => l !== variant && l !== lead && !avoid.has(l))
     .slice(0, MAX_OTHER_VARIANTS);
   const leftLongest = regularKeys(keys).sort((a, b) => keys.lastIndexOf(a) - keys.lastIndexOf(b));
+  // As with `added`: what fitting the week or a focus took out isn't there to report.
+  const inPlan = standIns.filter((s) => focus.exerciseIds.includes(s.exerciseId));
+  // A new stand-in was never the user's own, so its going is no news to them.
+  const isNew = (id: string) => standIns.some((s) => s.fresh && s.exerciseId === id);
   return {
     key,
     exerciseIds: focus.exerciseIds,
-    leftOut: fit.leftOut,
+    leftOut: fit.leftOut.filter((id) => !isNew(id)),
     // A focus can take the slot of what was added, and then it isn't there to report.
     added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
-    focus: focus.picks,
+    focus: focus.picks.map(({ replaced, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced } : focusPick)),
+    standIns: inPlan,
     partners,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,
     otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),
-    reason: variant === suggested ? variantReason(ofType, leads, variant, key, exercises) : null,
+    reason: variant === suggested ? reasonWithLead(variantReason(ofType, leads, variant, key, exercises), leadIn(inPlan)) : null,
     otherLeads,
   };
 }

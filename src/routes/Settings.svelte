@@ -3,10 +3,12 @@
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import { lastBackupLabel, runBackup } from '../lib/backupReminder';
+  import { avoidedExercises, saveExerciseSettings } from '../lib/coach/data';
   import { fmtKg } from '../lib/coach/text';
   import { applyBackup, readBackup, type BackupContents } from '../lib/db/backup';
   import { KEEP_COPIES, listCopies, restoreCopy, type SafetyCopy } from '../lib/db/safety';
   import { db } from '../lib/db/schema';
+  import { nameOf } from '../lib/exercises.svelte';
   import { locale, t, tn } from '../lib/i18n.svelte';
   import { install, promptInstall, showIOSInstallHint } from '../lib/install.svelte';
   import { live } from '../lib/live.svelte';
@@ -50,6 +52,15 @@
   }
 
   const workouts = live(() => db.workouts.where('status').equals('done').count());
+
+  // ---------- Exercises the app doesn't suggest ----------
+
+  const avoidedList = live(() => avoidedExercises());
+  const avoided = $derived(
+    (avoidedList.value ?? [])
+      .map((exercise) => ({ exercise, name: nameOf(exercise) }))
+      .sort((a, b) => a.name.localeCompare(b.name, locale())),
+  );
 
   // ---------- Tags ----------
 
@@ -225,6 +236,18 @@
       </div>
     </div>
     <p class="hint small muted">{t('settings.training.hint')}</p>
+    {#if avoided.length}
+      <div class="label">{t('settings.avoided.title')}</div>
+      <div class="list avoided">
+        {#each avoided as { exercise, name } (exercise.id)}
+          <div class="list-item static">
+            <a class="grow avoided-name" href="#/exercise/{encodeURIComponent(exercise.id)}">{name}</a>
+            <button class="btn avoided-btn" onclick={() => saveExerciseSettings(exercise.id, { avoid: undefined })}>{t('settings.avoided.restore')}</button>
+          </div>
+        {/each}
+      </div>
+      <p class="hint small muted">{t('settings.avoided.hint')}</p>
+    {/if}
   </section>
 
   <section class="section">
@@ -338,6 +361,20 @@
   .copy {
     display: flex;
     flex-direction: column;
+  }
+  .avoided {
+    margin-top: 4px;
+  }
+  .avoided-name {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+  .avoided-btn {
+    flex-shrink: 0;
+    min-height: 36px;
+    padding: 4px 10px;
   }
   .tag-row {
     gap: 8px;

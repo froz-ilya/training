@@ -227,6 +227,54 @@ describe('database versions', () => {
     db.close();
   });
 
+  it('reads a v1 exercise setting as not avoided, and it stays that way through a backup', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const row = { exerciseId: 'machine-chest-press', machineSetting: 'seat 8' };
+    expect(await db.exerciseSettings.toArray()).toEqual([row]);
+    const { exportBackup, restoreBackup } = await import('./backup');
+    const text = await (await exportBackup()).text();
+    await db.exerciseSettings.clear();
+    await restoreBackup(text);
+    const [restored] = await db.exerciseSettings.toArray();
+    expect(restored).toEqual(row);
+    expect('avoid' in restored).toBe(false);
+    db.close();
+  });
+
+  it('keeps v1 data whole when an exercise is marked and unmarked', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { saveExerciseSettings } = await import('../coach/data');
+    await saveExerciseSettings('machine-chest-press', { avoid: true });
+    expect(await db.exerciseSettings.get('machine-chest-press')).toEqual({ exerciseId: 'machine-chest-press', machineSetting: 'seat 8', avoid: true });
+    await saveExerciseSettings('machine-chest-press', { avoid: undefined });
+    expect(await db.exerciseSettings.get('machine-chest-press')).toEqual({ exerciseId: 'machine-chest-press', machineSetting: 'seat 8' });
+    db.close();
+  });
+
+  it('opens a v2 row with the avoid mark as it was stored, with no upgrade', async () => {
+    const d = oldDb(2, V2);
+    await d.table('exerciseSettings').put({ exerciseId: 'barbell-squat', avoid: true });
+    d.close();
+    const db = await openCurrent();
+    expect(await db.exerciseSettings.get('barbell-squat')).toEqual({ exerciseId: 'barbell-squat', avoid: true });
+    db.close();
+  });
+
+  it('restores a v1 backup with no avoid marks, and reads a bad one in any backup as none', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { restoreBackup } = await import('./backup');
+    const file = (version: number, exerciseSettings: object[]) =>
+      JSON.stringify({ app: 'training', version, exportedAt: '', data: { workouts: [v1Workout], sets: [v1Set], exerciseSettings } });
+    expect(await restoreBackup(file(1, [{ exerciseId: 'machine-chest-press', machineSetting: 'seat 8' }]))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'machine-chest-press', machineSetting: 'seat 8' }]);
+    expect(await restoreBackup(file(2, [{ exerciseId: 'machine-chest-press', avoid: 'yes' }]))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'machine-chest-press' }]);
+    db.close();
+  });
+
   it('lists every table in USER_TABLES, so backups miss nothing', async () => {
     const db = await openCurrent();
     const { USER_TABLES } = await import('./schema');

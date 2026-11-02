@@ -3,6 +3,7 @@ import Dexie from 'dexie';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { exportBackup, listDays, parseBackup, readBackup, restoreBackup, importHistory } from './backup';
 import { FileError, HISTORY_EXAMPLE } from './historyFile';
+import { saveExerciseSettings } from '../coach/data';
 import { addExercise, createWorkout } from './repo';
 import { listCopies, SAFETY_DB_NAME } from './safety';
 import { db, DB_NAME, SCHEMA_VERSION } from './schema';
@@ -278,6 +279,41 @@ describe('comments in backups', () => {
   it('repairs comments with bad tags instead of failing', () => {
     const tables = parseBackup(JSON.stringify({ app: 'training', version: 1, exportedAt: '', data: { workouts: [], sets: [], exerciseNotes: [{ id: 'n', tags: 'x' }] } }));
     expect((tables.exerciseNotes[0] as { tags: string[] }).tags).toEqual([]);
+  });
+});
+
+describe('exercises the app doesn’t suggest, in backups', () => {
+  const backup = (exerciseSettings: object[]) => JSON.stringify({ app: 'training', version: 2, exportedAt: '', data: { workouts: [workout], sets: [set], exerciseSettings } });
+
+  it('carries the mark through a backup, with the rest of the row', async () => {
+    await db.exerciseSettings.put({ exerciseId: 'barbell-squat', machineSetting: 'rack 4', avoid: true });
+    const text = await fileText();
+    await db.exerciseSettings.clear();
+    expect(await restoreBackup(text)).toEqual({ workouts: 0, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'barbell-squat', machineSetting: 'rack 4', avoid: true }]);
+  });
+
+  it('writes no mark into a backup once it’s turned off', async () => {
+    await saveExerciseSettings('barbell-squat', { avoid: true });
+    await saveExerciseSettings('barbell-squat', { avoid: undefined });
+    expect(JSON.parse(await fileText()).data.exerciseSettings).toEqual([{ exerciseId: 'barbell-squat' }]);
+  });
+
+  it('reads a setting from a backup with no mark as not avoided', async () => {
+    await restoreBackup(backup([{ exerciseId: 'plank', repLow: 6 }]));
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
+  });
+
+  it('reads a damaged mark as not avoided, and counts nothing as left out', async () => {
+    expect(await restoreBackup(backup([{ exerciseId: 'plank', repLow: 6, avoid: 'yes' }]))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
+  });
+
+  it('brings the mark in with a new setting, and changes no setting on the device', async () => {
+    await db.exerciseSettings.put({ exerciseId: 'plank', repLow: 6 });
+    await importHistory(backup([{ exerciseId: 'barbell-squat', avoid: true }, { exerciseId: 'plank', avoid: true }]));
+    expect(await db.exerciseSettings.get('barbell-squat')).toEqual({ exerciseId: 'barbell-squat', avoid: true });
+    expect(await db.exerciseSettings.get('plank')).toEqual({ exerciseId: 'plank', repLow: 6 });
   });
 });
 

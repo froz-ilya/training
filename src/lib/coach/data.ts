@@ -178,6 +178,17 @@ async function exerciseMap(): Promise<Map<string, Exercise>> {
   return new Map([...CATALOG, ...custom].map((e) => [e.id, e]));
 }
 
+/** What the user doesn't want suggested. */
+function avoidedIds(saved: Map<string, ExerciseSettings>): Set<string> {
+  return new Set([...saved.values()].filter((s) => s.avoid === true).map((s) => s.exerciseId));
+}
+
+/** The exercises the user doesn't want suggested, in no particular order. */
+export async function avoidedExercises(): Promise<Exercise[]> {
+  const [saved, exercises] = await Promise.all([db.exerciseSettings.filter((s) => s.avoid === true).toArray(), exerciseMap()]);
+  return saved.flatMap((s) => exercises.get(s.exerciseId) ?? []);
+}
+
 /** Finished workouts in date order, as the rotation sees them. */
 function toRotation(sets: WorkoutSet[], workouts: Map<string, { date: string }>): RotationWorkout[] {
   const perWorkout = group(sets, (s) => s.workoutId);
@@ -348,6 +359,8 @@ export async function loadProgress(): Promise<ProgressData> {
     const exercise = exercises.get(s.exerciseId);
     return exercise ? [{ date: s.date, group: groupOf(exercise.muscle) }] : [];
   });
+  const load = bodyLoad(work.filter(isMeasured), [...workouts.values()].map((w) => w.date), exercises, today);
+  const avoid = avoidedIds(stored.settings);
   return {
     views,
     bests: allBests.slice(0, BESTS_SHOWN),
@@ -357,7 +370,8 @@ export async function loadProgress(): Promise<ProgressData> {
       bests: countRecent(allBests, today),
     },
     groups: groupSummaries(views, grouped, today),
-    body: bodyLoad(work.filter(isMeasured), [...workouts.values()].map((w) => w.date), exercises, today),
+    // `others` is what the user could pick up, so it's a suggestion. `shares` is history and stays.
+    body: { ...load, regions: load.regions.map((row) => ({ ...row, others: row.others.filter((e) => !avoid.has(e.id)) })) },
     weeks: weeklyVolume(entries, today, WEEKS_OF_VOLUME),
     calendar,
     workouts: workouts.size,
@@ -479,6 +493,8 @@ export interface NextWorkout {
   added: Muscle[];
   /** Exercises brought in for a Focus muscle, and what each replaced, if anything. */
   focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise }[];
+  /** Exercises planned in place of ones the user doesn't want suggested. */
+  standIns: { exercise: Exercise; instead: Exercise; fresh: boolean }[];
 }
 
 /**
@@ -497,7 +513,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
   const { perWeek } = training;
-  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick, settings.regionGoals);
+  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick, settings.regionGoals, avoidedIds(stored.settings));
   if (!plan) return null;
   const perExercise = group(sets, (s) => s.exerciseId);
   const body = bodyKg(settings.bodyWeightKg);
@@ -523,7 +539,8 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types.map(typeName) };
   const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
   const focus = plan.focus.map(({ exerciseId, region, fresh, replaced }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined }));
-  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus };
+  const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, standIns };
 }
 
 // ---------- Saving ----------

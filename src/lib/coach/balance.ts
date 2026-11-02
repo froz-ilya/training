@@ -84,16 +84,20 @@ export interface BodyLoad {
 
 const shareWeight = (share: RegionShare) => share.sets * (share.helper ? HELPER_WEIGHT : 1);
 
-/** One of each equipment, then a second of each, and so on: the catalogue keeps similar exercises side by side. */
+/**
+ * One of each equipment, then a second of each, and so on: the catalogue keeps similar exercises side
+ * by side. Within each equipment, what's mainly for fewer muscles comes first, so it's the most direct.
+ */
 function mixEquipment(list: Exercise[]): Exercise[] {
+  const direct = [...list].sort((a, b) => regionsOf(a).main.length - regionsOf(b).main.length);
   const seen = new Map<Equipment, number>();
   const turns = new Map<Exercise, number>();
-  for (const exercise of list) {
+  for (const exercise of direct) {
     const turn = seen.get(exercise.equipment) ?? 0;
     seen.set(exercise.equipment, turn + 1);
     turns.set(exercise, turn);
   }
-  return [...list].sort((a, b) => turns.get(a)! - turns.get(b)!);
+  return direct.sort((a, b) => turns.get(a)! - turns.get(b)!);
 }
 
 /** Sets the regions got per week. Weeks run back from today, so the latest week is always a whole one. */

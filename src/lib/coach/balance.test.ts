@@ -75,6 +75,12 @@ describe('other exercises for a region', () => {
     expect(new Set(lats.slice(0, kinds.size).map((e) => e.equipment))).toEqual(kinds);
   });
 
+  it('puts the most direct exercise of each equipment first', () => {
+    const glutes = others(bodyLoad([], [], exercises, TODAY), 'glutes');
+    expect(glutes[0]).toBe('hip-thrust');
+    expect(glutes.indexOf('hip-thrust')).toBeLessThan(glutes.indexOf('deadlift'));
+  });
+
   it('includes a user’s own exercise', () => {
     const own = { ...exercises.get('pec-deck')!, id: 'custom-chest' };
     const load = bodyLoad([], [], new Map([...exercises, [own.id, own]]), TODAY);

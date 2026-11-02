@@ -35,6 +35,17 @@ describe('body regions', () => {
     expect(regionsOf(catalogExercise('leg-extension')!).main).toEqual(['quads']);
   });
 
+  it('counts the glutes as a main muscle where the hip drives the lift', () => {
+    const forGlutes = ['barbell-squat', 'plie-squat', 'bulgarian-split-squat', 'lunge', 'smith-lunge', 'pistol-squat', 'step-up', 'deadlift', 'romanian-deadlift', 'hip-thrust'];
+    for (const id of forGlutes) expect(regionsOf(catalogExercise(id)!).main, id).toContain('glutes');
+    for (const id of ['leg-press', 'hack-squat', 'front-squat']) expect(regionsOf(catalogExercise(id)!).helpers, id).toContain('glutes');
+  });
+
+  it('counts the lower back in a row only when nothing supports the chest', () => {
+    for (const id of ['barbell-row', 't-bar-row', 'underhand-barbell-row']) expect(regionsOf(catalogExercise(id)!).helpers, id).toContain('lowerBack');
+    for (const id of ['chest-supported-row', 'seated-cable-row', 'dumbbell-row']) expect(regionsOf(catalogExercise(id)!).helpers, id).not.toContain('lowerBack');
+  });
+
   describe('a user’s own exercise', () => {
     it('goes by its muscle', () => {
       expect(regionsOf({ id: 'custom-1', muscle: 'back' })).toEqual({ main: ['lats'], helpers: ['upperBack'] });

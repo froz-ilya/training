@@ -38,7 +38,11 @@ const NARROW_PRESS = work(['triceps'], ['chest', 'frontDelts']);
 const PULLDOWN = work(['lats'], ['biceps', 'upperBack']);
 const PULL_UP = work(['lats'], ['biceps', 'upperBack', 'forearms']);
 const ROW = work(['lats', 'upperBack'], ['biceps', 'rearDelts']);
+/** With nothing under the chest, the lower back holds the torso up through the whole set. */
+const BENT_ROW = work(ROW.main, [...ROW.helpers, 'lowerBack']);
 const SQUAT = work(['quads'], ['glutes']);
+/** A deep or wide squat, one leg, a split stance or a step-up: the hip does as much as the knee. */
+const HIP_SQUAT = work(['quads', 'glutes']);
 const SHOULDER_PRESS = work(['frontDelts'], ['sideDelts', 'triceps']);
 const UPRIGHT_ROW = work(['sideDelts'], ['upperBack', 'biceps']);
 const REAR_DELTS = work(['rearDelts'], ['upperBack']);
@@ -75,38 +79,30 @@ const EXERCISES: [RegionWork, string[]][] = [
       'neutral-grip-cable-row',
       'close-grip-cable-row',
       'machine-row',
-      'barbell-row',
       'dumbbell-row',
-      't-bar-row',
-      'underhand-barbell-row',
     ],
   ],
+  [BENT_ROW, ['barbell-row', 't-bar-row', 'underhand-barbell-row']],
   [work(['upperBack'], ['rearDelts', 'lats', 'biceps']), ['upper-back-row']],
   [work(['upperBack']), ['shrug']],
-  [work(['lowerBack'], ['hamstrings', 'glutes', 'upperBack', 'forearms']), ['deadlift']],
-  [work(['hamstrings'], ['glutes', 'lowerBack']), ['romanian-deadlift']],
+  [work(['lowerBack', 'glutes', 'hamstrings'], ['quads', 'upperBack', 'forearms']), ['deadlift']],
+  [work(['hamstrings', 'glutes'], ['lowerBack']), ['romanian-deadlift']],
   [work(['lowerBack'], ['glutes', 'hamstrings']), ['back-extension']],
   [
     SQUAT,
     [
-      'barbell-squat',
       'smith-squat',
       'front-squat',
       'bodyweight-squat',
-      'plie-squat',
       'goblet-squat',
       'hack-squat',
       'leg-press',
       'leg-press-narrow',
       'plate-loaded-leg-press',
       'single-leg-press',
-      'bulgarian-split-squat',
-      'lunge',
-      'smith-lunge',
-      'pistol-squat',
-      'step-up',
     ],
   ],
+  [HIP_SQUAT, ['barbell-squat', 'plie-squat', 'bulgarian-split-squat', 'lunge', 'smith-lunge', 'pistol-squat', 'step-up']],
   [work(['quads']), ['leg-extension', 'wall-sit']],
   [work(['hamstrings']), ['lying-leg-curl', 'seated-leg-curl']],
   [work(['glutes'], ['hamstrings']), ['hip-thrust']],

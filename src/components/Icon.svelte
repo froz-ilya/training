@@ -25,6 +25,7 @@
     minus: 'M5 12h14',
     share: 'M12 15V3M8 7l4-4 4 4M5 12v8h14v-8',
     swap: 'M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7',
+    target: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 15a3 3 0 100-6 3 3 0 000 6z',
     sparkle: 'M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6',
   } as const;
   export type IconName = keyof typeof PATHS;

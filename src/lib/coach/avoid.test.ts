@@ -115,6 +115,14 @@ describe('an avoided filler', () => {
     expect(next.standIns).toEqual([]);
   });
 
+  it('drops the muscle in common along with a new stand-in a focus took the place of', () => {
+    const history = [on(40, ['bulgarian-split-squat']), ...alternating(day)];
+    const { exerciseId } = plan(history, ['leg-press'])!.standIns[0];
+    const next = plan(history, ['leg-press'], { glutes: 'focus' })!;
+    expect(next.exerciseIds).not.toContain(exerciseId);
+    expect(next.focus).toEqual([{ exerciseId: 'bulgarian-split-squat', region: 'glutes', fresh: false }]);
+  });
+
   it('still names a stand-in the user knows when a focus took its place', () => {
     const history = [on(40, ['hack-squat']), ...alternating(day)];
     const next = plan(history, ['leg-press'], { sideDelts: 'focus', rearDelts: 'focus' })!;

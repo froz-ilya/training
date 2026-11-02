@@ -3,7 +3,7 @@ import { CATALOG } from '../catalog/exercises';
 import { regionsOf } from '../catalog/regions';
 import type { BodyRegion, Exercise, RegionGoal } from '../types';
 import { fitWeek, type MuscleBudget, type WeekPlan } from './budget';
-import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
+import { applyFocus, heldEnough, trainsShortFocus, weekSets, type FocusPlan, type RegionSets } from './focus';
 import { planNextType, type RotationWorkout } from './next';
 
 const exercises = new Map<string, Exercise>(CATALOG.map((e) => [e.id, e]));
@@ -181,7 +181,7 @@ describe('a Focus muscle', () => {
 
   it('doesn’t take back what the week left out', () => {
     const fit = applyFocus(
-      { exerciseIds: CHEST, anchors: CHEST.slice(0, 3), groups: ['chest'], partners: [], leftOut: ['lateral-raise'], max: 6, recent: ['lateral-raise', 'cable-lateral-raise'], older: [] },
+      { exerciseIds: CHEST, anchors: CHEST.slice(0, 3), groups: ['chest'], partners: [], leftOut: ['lateral-raise'], max: 6, recent: ['lateral-raise', 'cable-lateral-raise'], older: [], usualPoints: 8 },
       { sideDelts: 'focus' },
       new Map(),
       exercises,
@@ -205,6 +205,145 @@ describe('a Focus muscle', () => {
     const { exerciseIds, leftOut } = plan(workouts, { biceps: 'focus' });
     expect(leftOut).toEqual([]);
     expect(exerciseIds).toContain('barbell-curl');
+  });
+});
+
+describe('what a Focus pick costs and where it goes', () => {
+  /** LEGS comes to 8 points, so a usual day has 9 to work with. Its fillers are leg extension and seated curl. */
+  const legDay: FocusPlan = { exerciseIds: LEGS, anchors: LEGS.slice(0, 3), groups: ['legs'], partners: [], leftOut: [], max: 6, recent: [], older: [], usualPoints: 8 };
+  /** BACK comes to 9 points. Its fillers are shrug and straight-arm pulldown. */
+  const backDay: FocusPlan = { ...legDay, exerciseIds: BACK, anchors: BACK.slice(0, 3), groups: ['back'], usualPoints: 9 };
+  const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
+
+  it('counts a planned helper at half, so helpers can cover a muscle', () => {
+    // Glutes' Focus range starts at 6 sets: these help with 1.5 each.
+    const helping = ['smith-squat', 'leg-press', 'hack-squat', 'goblet-squat'];
+    expect(plan(alternating([...helping, 'leg-extension'], CHEST), { glutes: 'focus' }).focus).toEqual([]);
+    const short = [...helping.slice(0, 3), 'leg-extension', 'seated-leg-curl'];
+    expect(plan(alternating(short, CHEST), { glutes: 'focus' }).focus.map((pick) => pick.region)).toEqual(['glutes']);
+  });
+
+  it('adds no deadlift on top of a back day', () => {
+    const { exerciseIds, focus } = plan([on(70, ['deadlift']), ...alternating(BACK, LEGS)], { glutes: 'focus' });
+    expect(focus).toEqual([]);
+    expect(exerciseIds).toEqual(BACK);
+  });
+
+  it('adds that deadlift when the day usually costs that much', () => {
+    const { picks } = fit({ ...backDay, recent: ['deadlift'], usualPoints: 11 }, { glutes: 'focus' });
+    expect(picks.map((pick) => pick.exerciseId)).toEqual(['deadlift']);
+  });
+
+  it('tries the next exercise, even one done more recently', () => {
+    const { exerciseIds, picks } = fit({ ...backDay, partners: ['glutes'], recent: ['deadlift', 'hip-abductor'] }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
+    expect(exerciseIds).toEqual([...BACK, 'hip-abductor']);
+  });
+
+  it('leaves a hard lift out of a leg day at its usual cost, even in a filler’s place', () => {
+    const history = [on(70, ['bulgarian-split-squat']), ...alternating(LEGS, [...CHEST.slice(0, 4), 'hip-abductor'])];
+    const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
+    expect(exerciseIds).toEqual([...LEGS, 'hip-abductor']);
+    expect(focus).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
+  });
+
+  it('replaces a filler for its other main muscle rather than going on top', () => {
+    const { exerciseIds, picks } = fit({ ...legDay, recent: ['bulgarian-split-squat'], usualPoints: 9 }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'bulgarian-split-squat', region: 'glutes', fresh: false, replaced: 'leg-extension', overlap: 'quads' }]);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'bulgarian-split-squat', 'seated-leg-curl']);
+  });
+
+  it('takes the last of several fillers for that muscle', () => {
+    const day = [...LEGS.slice(0, 3), 'leg-extension', 'wall-sit'];
+    const { picks } = fit({ ...legDay, exerciseIds: day, recent: ['bulgarian-split-squat'], usualPoints: 9 }, { glutes: 'focus' });
+    expect(picks[0]).toMatchObject({ replaced: 'wall-sit', overlap: 'quads' });
+  });
+
+  it('goes on top when only a main lift trains that muscle', () => {
+    const { exerciseIds, picks } = fit({ ...legDay, exerciseIds: LEGS.slice(0, 3), recent: ['bulgarian-split-squat'] }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'bulgarian-split-squat', region: 'glutes', fresh: false }]);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'bulgarian-split-squat']);
+  });
+
+  it('marks no overlap on a swap made for room', () => {
+    const { picks } = fit({ ...backDay, max: 5, recent: ['lateral-raise'] }, { sideDelts: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false, replaced: 'straight-arm-pulldown' }]);
+  });
+
+  it('keeps the on-top slot after replacing a filler for its muscle', () => {
+    // Glutes are 1.5 short and calves 1, so glutes go first.
+    const { exerciseIds, picks } = fit(
+      { ...legDay, recent: ['bulgarian-split-squat', 'standing-calf-raise'], usualPoints: 10 },
+      { glutes: 'focus', calves: 'focus' },
+      new Map([['calves', 5]]),
+    );
+    expect(picks.map((pick) => pick.region)).toEqual(['glutes', 'calves']);
+    expect(picks[1].replaced).toBeUndefined();
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'bulgarian-split-squat', 'seated-leg-curl', 'standing-calf-raise']);
+  });
+
+  it('puts medium and hard picks straight after the main lifts, in pick order', () => {
+    const { exerciseIds, picks } = fit({ ...backDay, recent: ['seated-dip-machine', 'overhead-press'], usualPoints: 30 }, { triceps: 'focus', frontDelts: 'focus' });
+    expect(picks.map((pick) => pick.exerciseId)).toEqual(['seated-dip-machine', 'overhead-press']);
+    expect(exerciseIds).toEqual([...BACK.slice(0, 3), 'seated-dip-machine', 'overhead-press', 'shrug']);
+  });
+
+  it('keeps light picks last, whatever comes after them', () => {
+    const { exerciseIds, picks } = fit({ ...backDay, recent: ['lateral-raise', 'overhead-press'], usualPoints: 30 }, { sideDelts: 'focus', frontDelts: 'focus' });
+    expect(picks.map((pick) => pick.exerciseId)).toEqual(['lateral-raise', 'overhead-press']);
+    expect(exerciseIds).toEqual([...BACK.slice(0, 3), 'overhead-press', 'shrug', 'lateral-raise']);
+  });
+
+  it('places a pick by the same rule when it replaces a filler, not in the filler’s slot', () => {
+    const forMuscle = fit({ ...legDay, recent: ['romanian-deadlift'], usualPoints: 9 }, { glutes: 'focus' });
+    expect(forMuscle.picks[0]).toMatchObject({ replaced: 'seated-leg-curl', overlap: 'hamstrings' });
+    expect(forMuscle.exerciseIds).toEqual([...LEGS.slice(0, 3), 'romanian-deadlift', 'leg-extension']);
+    const forRoom = fit({ ...backDay, max: 5, recent: ['overhead-press'], usualPoints: 30 }, { frontDelts: 'focus' });
+    expect(forRoom.picks[0]).toMatchObject({ replaced: 'straight-arm-pulldown' });
+    expect(forRoom.exerciseIds).toEqual([...BACK.slice(0, 3), 'overhead-press', 'shrug']);
+  });
+
+  it('picks nothing when nothing passes the limit', () => {
+    const mainLifts = LEGS.slice(0, 3);
+    expect(fit({ ...legDay, exerciseIds: mainLifts, recent: ['hip-abductor'], usualPoints: 4 }, { glutes: 'focus' })).toEqual({ exerciseIds: mainLifts, picks: [] });
+  });
+
+  it('only gates picks: a plan over the limit stays as it is', () => {
+    const mainLifts = LEGS.slice(0, 3);
+    expect(fit({ ...legDay, exerciseIds: mainLifts, usualPoints: 3 }, { glutes: 'focus' }).exerciseIds).toEqual(mainLifts);
+  });
+
+  it('takes a filler’s place when going on top would cost too much', () => {
+    const { exerciseIds, picks } = fit({ ...legDay, recent: ['hip-thrust'] }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'hip-thrust', region: 'glutes', fresh: false, replaced: 'seated-leg-curl' }]);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hip-thrust', 'leg-extension']);
+  });
+
+  it('passes over an avoided exercise for the next one', () => {
+    const { picks } = fit({ ...legDay, recent: ['hip-thrust', 'hip-abductor'], avoid: new Set(['hip-thrust']) }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
+  });
+
+  it('still swaps like for like in a plan over the limit', () => {
+    const { picks } = fit({ ...backDay, max: 5, recent: ['lateral-raise'], usualPoints: 3 }, { sideDelts: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false, replaced: 'straight-arm-pulldown' }]);
+  });
+
+  it('goes by what the variant’s workouts usually cost, not by today’s shorter plan', () => {
+    // Nine points as a rule, and seven today because Maintain left the press out.
+    const day = [...LEGS.slice(0, 3), 'leg-extension', 'dumbbell-shoulder-press'];
+    const history = [on(70, ['bulgarian-split-squat']), ...alternating(day, CHEST).slice(0, -1), on(3, [...CHEST.slice(0, 4), 'dumbbell-shoulder-press'])];
+    const { exerciseIds, focus, leftOut } = plan(history, { frontDelts: 'maintain', glutes: 'focus' });
+    expect(leftOut).toEqual(['dumbbell-shoulder-press']);
+    expect(focus).toEqual([{ exerciseId: 'bulgarian-split-squat', region: 'glutes', fresh: false, replaced: 'leg-extension', overlap: 'quads' }]);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'bulgarian-split-squat']);
+  });
+
+  it('takes the median, so one big day doesn’t raise the limit', () => {
+    const history = [on(70, ['bulgarian-split-squat']), on(20, [...LEGS, 'deadlift', 'overhead-press']), ...alternating(LEGS, CHEST).slice(1)];
+    const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
+    expect(focus.map((pick) => pick.exerciseId)).toEqual(['hip-abductor']);
+    expect(exerciseIds).toEqual([...LEGS, 'hip-abductor']);
   });
 });
 

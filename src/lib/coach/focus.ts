@@ -1,3 +1,4 @@
+import { difficultyOf, difficultyPoints } from '../catalog/difficulty';
 import { groupOf, type MuscleGroup } from '../catalog/groups';
 import { BODY_REGIONS, regionsOf } from '../catalog/regions';
 import { daysBetween } from '../dates';
@@ -10,7 +11,8 @@ import type { FocusPick, RotationWorkout } from './next';
 /**
  * The user's goals for parts of the body, as the planner follows them. A Focus muscle that's short
  * this week gets more work, and a Maintain muscle that has had enough gives up its fillers. It only
- * changes which exercises are planned, never their weights, and with no goals it changes nothing.
+ * changes which exercises are planned and where they go, never their weights, and with no goals it
+ * changes nothing.
  */
 
 export type RegionGoals = Partial<Record<BodyRegion, RegionGoal>>;
@@ -22,6 +24,8 @@ const DAYS_IN_WEEK = 7;
 const PLANNED_SETS = 3;
 /** A workout stays the user's own: the accent is a part of it. */
 const MAX_FOCUS = 2;
+/** A starting value: a Focus exercise may make a workout a little harder than usual, not a lot. */
+const ROOM = 1;
 /** Muscles that round off any day. Chest, back and legs wait for their own. */
 const ANY_DAY: readonly Muscle[] = ['shoulders', ...SMALL];
 
@@ -73,6 +77,8 @@ export interface FocusPlan {
   recent: string[];
   /** What they did before that, longest ago first. */
   older: string[];
+  /** What this kind of workout usually costs, in difficulty points. */
+  usualPoints: number;
   /** Exercises the user doesn't want suggested. */
   avoid?: ReadonlySet<string>;
 }
@@ -84,9 +90,13 @@ export interface FocusFit {
 
 /**
  * Brings in work for the Focus muscles that are short this week, the shortest first, one exercise for
- * each. The first goes on top while the workout has room, and the next takes a filler's place, so a
- * focus never costs a main lift or makes a workout much longer. Both go last. What the user has done
- * comes first, and only then something new. A muscle that can't join this day waits for its own.
+ * each. What the user has done comes first, and only then something new. It can't take the workout
+ * more than ROOM over its usual cost, or the next one is tried, and with none left the muscle goes
+ * without today. An exercise that also trains what a filler trains takes that filler's place.
+ * Otherwise the first goes on top if the workout has room and that fits, and any other takes a
+ * filler's place, so a focus never costs a main lift or makes a workout much longer. Medium and hard
+ * picks go straight after the main lifts, and light ones last. A muscle that can't join this day
+ * waits for its own.
  */
 export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets, exercises: Map<string, Exercise>): FocusFit {
   const exerciseIds = [...plan.exerciseIds];
@@ -99,41 +109,68 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     .map((e) => e.id);
 
   const mainOf = (id: string) => regionsOf(exercises.get(id)!).main;
+  const helpersOf = (id: string) => regionsOf(exercises.get(id)!).helpers;
   const muscleOf = (id: string) => exercises.get(id)!.muscle;
-  const shortBy = (region: BodyRegion) =>
-    regionRange(region, 'focus').low - setsOf(week, region) - PLANNED_SETS * exerciseIds.filter((id) => mainOf(id).includes(region)).length;
+  const pointsOf = (id: string) => difficultyPoints(exercises.get(id)!);
+  const isHeavy = (id: string) => difficultyOf(exercises.get(id)!) !== 'light';
+  const plannedFor = (region: BodyRegion) =>
+    exerciseIds.filter((id) => mainOf(id).includes(region)).length + HELPER_WEIGHT * exerciseIds.filter((id) => helpersOf(id).includes(region)).length;
+  const shortBy = (region: BodyRegion) => regionRange(region, 'focus').low - setsOf(week, region) - PLANNED_SETS * plannedFor(region);
   const joins = (muscle: Muscle) => plan.groups.includes(groupOf(muscle)) || plan.partners.includes(muscle) || ANY_DAY.includes(muscle);
   const canPick = (id: string, region: BodyRegion) =>
     mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && !plan.avoid?.has(id) && joins(muscleOf(id));
+  const fillers = () =>
+    exerciseIds.filter((id) => !plan.anchors.includes(id) && !plan.partners.includes(muscleOf(id)) && !mainOf(id).some((region) => goals[region] === 'focus'));
   /** The last filler, or better, the last one for a muscle that's only being held. */
   const fillerToSwap = () => {
-    const fillers = exerciseIds.filter(
-      (id) => !plan.anchors.includes(id) && !plan.partners.includes(muscleOf(id)) && !mainOf(id).some((region) => goals[region] === 'focus'),
-    );
-    const held = fillers.filter((id) => mainOf(id).length && mainOf(id).every((region) => goals[region] === 'maintain'));
-    return held.at(-1) ?? fillers.at(-1);
+    const swappable = fillers();
+    const held = swappable.filter((id) => mainOf(id).length && mainOf(id).every((region) => goals[region] === 'maintain'));
+    return held.at(-1) ?? swappable.at(-1);
+  };
+  /** The last filler for another muscle this exercise is mainly for: the day doesn't need that work twice. */
+  const sameWork = (id: string, region: BodyRegion) => {
+    const others = mainOf(id).filter((other) => other !== region);
+    return fillers().filter((filler) => mainOf(filler).some((other) => others.includes(other))).at(-1);
+  };
+  /** Within ROOM of the usual cost, or no harder than the plan already was. */
+  const withinLimit = (id: string, replaced?: string) => {
+    const total = exerciseIds.reduce((sum, other) => sum + pointsOf(other), 0);
+    return total + pointsOf(id) - (replaced ? pointsOf(replaced) : 0) <= Math.max(plan.usualPoints + ROOM, total);
+  };
+  /** Straight after the main lifts and any heavy pick before it, or last when it's light. */
+  const place = (id: string) => {
+    if (!isHeavy(id)) {
+      exerciseIds.push(id);
+      return;
+    }
+    const ahead = [...plan.anchors, ...picks.map((pick) => pick.exerciseId).filter(isHeavy)];
+    exerciseIds.splice(Math.max(...ahead.map((other) => exerciseIds.indexOf(other))) + 1, 0, id);
   };
 
+  const candidates = [...done, ...untried];
   const order = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0).sort((a, b) => shortBy(b) - shortBy(a));
   let onTop = false;
   for (const region of order) {
     if (picks.length >= MAX_FOCUS) break;
     // A pick for an earlier muscle may have covered this one.
     if (shortBy(region) <= 0) continue;
-    const id = [...done, ...untried].find((candidate) => canPick(candidate, region));
-    if (id === undefined) continue;
-    const fresh = !done.includes(id);
-    if (!onTop && exerciseIds.length < plan.max) {
-      onTop = true;
-      exerciseIds.push(id);
-      picks.push({ exerciseId: id, region, fresh });
-      continue;
+    for (const id of candidates) {
+      if (!canPick(id, region)) continue;
+      const overlap = sameWork(id, region);
+      const goesOnTop = overlap === undefined && !onTop && exerciseIds.length < plan.max && withinLimit(id);
+      const replaced = goesOnTop ? undefined : (overlap ?? fillerToSwap());
+      if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced))) continue;
+      const pick: FocusPick = { exerciseId: id, region, fresh: !done.includes(id) };
+      if (goesOnTop) onTop = true;
+      else {
+        exerciseIds.splice(exerciseIds.indexOf(replaced!), 1);
+        pick.replaced = replaced;
+      }
+      if (overlap !== undefined) pick.overlap = mainOf(overlap).find((other) => other !== region && mainOf(id).includes(other));
+      place(id);
+      picks.push(pick);
+      break;
     }
-    const replaced = fillerToSwap();
-    if (replaced === undefined) continue;
-    exerciseIds.splice(exerciseIds.indexOf(replaced), 1);
-    exerciseIds.push(id);
-    picks.push({ exerciseId: id, region, fresh, replaced });
   }
   return { exerciseIds, picks };
 }

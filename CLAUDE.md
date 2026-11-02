@@ -80,7 +80,8 @@ migration that is tested.
   through the same `normalizeTables()`.
 - Exercises: src/lib/catalog/exercises.ts holds the catalogue. A user's own exercises get a
   `custom-` id. Names always go through `nameOf()` (src/lib/exercises.svelte.ts), never a stored name.
-  A new catalogue exercise also needs its body regions in src/lib/catalog/regions.ts.
+  A new catalogue exercise also needs its body regions in src/lib/catalog/regions.ts and its level in
+  src/lib/catalog/difficulty.ts.
 - Exercise photos: src/lib/catalog/photos.ts credits each picture in public/photos, and the exercise
   page shows the credit. Pictures ship with the app, so nothing loads from another site. Use only
   files with a free licence on Wikimedia Commons, checked on the file's own page, and look at the
@@ -90,8 +91,11 @@ migration that is tested.
 - The body map on Progress shows training, never muscle size: work sets a week per region against a
   general range (src/lib/coach/balance.ts). Goals per region are in `settings.regionGoals`. A goal also
   steers the next workout (src/lib/coach/focus.ts): Focus adds one exercise per region while it's short
-  for the week, at most two a workout, the first on top and the next swapping a filler, and Maintain
-  drops fillers once its range is met. Main lifts and weights don't change.
+  for the week, at most two a workout, and only if the workout stays within a point of its usual
+  difficulty. A pick swaps a filler that trains its other main muscle; otherwise the first goes on top
+  if that fits, and any other swaps a filler. Medium and hard picks go straight after the main lifts,
+  light ones last.
+  Maintain drops fillers once its range is met. Main lifts and weights don't change.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
   stored, so they follow the interface language.

@@ -492,7 +492,7 @@ export interface NextWorkout {
   leftOut: Exercise[];
   added: Muscle[];
   /** Exercises brought in for a Focus muscle, and what each replaced, if anything. */
-  focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise }[];
+  focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion }[];
   /** Exercises planned in place of ones the user doesn't want suggested. */
   standIns: { exercise: Exercise; instead: Exercise; fresh: boolean }[];
 }
@@ -538,7 +538,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const typeName = (key: string): TypeName => ({ key, groups: typeGroups(key), partners: plan.partners[key] ?? [] });
   const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types.map(typeName) };
   const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
-  const focus = plan.focus.map(({ exerciseId, region, fresh, replaced }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined }));
+  const focus = plan.focus.map(({ exerciseId, region, fresh, replaced, overlap }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined, overlap }));
   const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
   return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, standIns };
 }

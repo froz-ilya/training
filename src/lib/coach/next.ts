@@ -1,3 +1,4 @@
+import { difficultyPoints } from '../catalog/difficulty';
 import { groupOf, leadingGroup, type MuscleGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
 import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
@@ -5,6 +6,7 @@ import { fitWeek, muscleBudgets, workedExercises } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
 import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
 import { expectedGapDays } from './frequency';
+import { median } from './position';
 import { replaceAvoided, type StandIn } from './standIn';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -37,6 +39,8 @@ export interface FocusPick {
   fresh: boolean;
   /** The filler it took the place of; none when it went on top. */
   replaced?: string;
+  /** The muscle both train: why it took that place, rather than to make room. */
+  overlap?: BodyRegion;
 }
 
 export interface PlannedType {
@@ -341,6 +345,11 @@ function doneExercises(workouts: RotationWorkout[], exercises: Map<string, Exerc
   return [...lastUsed.keys()].sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
 }
 
+/** What a workout cost, in difficulty points. */
+function workoutPoints(workout: RotationWorkout, exercises: Map<string, Exercise>): number {
+  return workedExercises(workout, exercises).reduce((total, id) => total + difficultyPoints(exercises.get(id)!), 0);
+}
+
 /**
  * Which variant of a type each workout was, named by its lead. A lead seen once that shares most of
  * its exercises with a regular variant is that variant with a small change: the bench was taken, say.
@@ -533,6 +542,7 @@ function planType(
       max: MAX_EXERCISES,
       recent,
       older: everDone.filter((id) => !recent.includes(id)),
+      usualPoints: median(scope.map((workout) => workoutPoints(workout, exercises))),
       avoid,
     },
     active,
@@ -556,7 +566,7 @@ function planType(
     leftOut: fit.leftOut.filter((id) => !isNew(id)),
     // A focus can take the slot of what was added, and then it isn't there to report.
     added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
-    focus: focus.picks.map(({ replaced, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced } : focusPick)),
+    focus: focus.picks.map(({ replaced, overlap, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced, overlap } : focusPick)),
     standIns: inPlan,
     partners,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,

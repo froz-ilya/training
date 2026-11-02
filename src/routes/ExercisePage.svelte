@@ -18,6 +18,7 @@
     type ExerciseView,
   } from '../lib/coach/data';
   import { weightOn } from '../lib/bodyWeight';
+  import { difficultyOf } from '../lib/catalog/difficulty';
   import { photoOf } from '../lib/catalog/photos';
   import { regionsOf } from '../lib/catalog/regions';
   import { needsOptions } from '../lib/coach/plateau';
@@ -127,6 +128,12 @@
       label={t('exercise.muscles.map')}
       note={view.exercise.id.startsWith('custom-') ? t('exercise.muscles.estimate') : undefined}
     />
+    <div class="card difficulty">
+      <b class="small">{t(`exercise.difficulty.${difficultyOf(view.exercise)}`)}</b>
+      <p class="muted small flat">
+        {t(view.exercise.id.startsWith('custom-') ? 'exercise.difficulty.estimate' : 'exercise.difficulty.note')}
+      </p>
+    </div>
 
     {#if view.sessions.length}
       <div class="card status">
@@ -343,6 +350,12 @@
 </div>
 
 <style>
+  .difficulty {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 16px;
+  }
   .status {
     display: flex;
     flex-direction: column;

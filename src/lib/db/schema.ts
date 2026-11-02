@@ -1,7 +1,9 @@
 import Dexie, { type EntityTable } from 'dexie';
+import { toISODate } from '../dates';
 import type {
   Alias,
   Baseline,
+  BodyWeight,
   CustomExercise,
   ExerciseNote,
   ExerciseSettings,
@@ -17,7 +19,7 @@ export const DB_NAME = 'training';
  * The newest schema version this code knows. Raise it together with a new this.version() block
  * below. Rules: CLAUDE.md, "User data must stay compatible". Existing blocks are never edited.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Tables that hold user data: backups and safety copies carry all of them. */
 export const USER_TABLES = [
@@ -30,6 +32,7 @@ export const USER_TABLES = [
   'stallRecords',
   'settings',
   'exerciseNotes',
+  'bodyWeights',
 ] as const;
 
 /**
@@ -50,6 +53,7 @@ export class TrainingDB extends Dexie {
   stallRecords!: EntityTable<StallRecord, 'id'>;
   settings!: EntityTable<Settings, 'id'>;
   exerciseNotes!: EntityTable<ExerciseNote, 'id'>;
+  bodyWeights!: EntityTable<BodyWeight, 'date'>;
 
   /** The stored data turned out newer than this code, so this connection stays closed for good. */
   outdated = false;
@@ -68,6 +72,13 @@ export class TrainingDB extends Dexie {
       settings: 'id',
       exerciseNotes: 'id, workoutId, exerciseId, [exerciseId+date]',
     });
+    // The weight in settings starts the log. It's all that's known, and it holds as of the upgrade.
+    this.version(2)
+      .stores({ bodyWeights: 'date' })
+      .upgrade(async (tx) => {
+        const kg = (await tx.table('settings').get('main'))?.bodyWeightKg;
+        if (typeof kg === 'number' && kg > 0) await tx.table('bodyWeights').put({ date: toISODate(), kg });
+      });
     // A newer tab is upgrading the data. Left alone, Dexie closes this connection but the next query
     // reopens it at the new version, and old code writes into data it doesn't understand. So this
     // tab closes for good: queries now reject, and the upgrade in the other tab can go ahead.

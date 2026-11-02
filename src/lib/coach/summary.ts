@@ -12,7 +12,8 @@ export interface ExerciseRecords {
   sessions: number;
 }
 
-export function exerciseRecords(sessions: Session[], load: Load, body: number): ExerciseRecords {
+/** `body` can go by the day, for records that read each session at what the user weighed then. */
+export function exerciseRecords(sessions: Session[], load: Load, body: number | ((date: string) => number)): ExerciseRecords {
   const records: ExerciseRecords = {
     heaviest: null,
     heaviestDate: null,
@@ -22,13 +23,14 @@ export function exerciseRecords(sessions: Session[], load: Load, body: number): 
     sessions: sessions.length,
   };
   for (const session of sessions) {
+    const bodyThen = typeof body === 'function' ? body(session.date) : body;
     for (const set of comparableSets(session)) {
       const top = records.heaviest;
       if (!top || set.weightKg > top.weightKg || (set.weightKg === top.weightKg && set.reps > top.reps)) {
         records.heaviest = set;
         records.heaviestDate = session.date;
       }
-      const estimate = estimateSet(set, load, body);
+      const estimate = estimateSet(set, load, bodyThen);
       if (estimate > records.bestEstimate) {
         records.bestEstimate = estimate;
         records.bestEstimateDate = session.date;

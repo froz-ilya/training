@@ -3,6 +3,7 @@
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import { lastBackupLabel, runBackup } from '../lib/backupReminder';
+  import { fmtKg } from '../lib/coach/text';
   import { applyBackup, readBackup, type BackupContents } from '../lib/db/backup';
   import { KEEP_COPIES, listCopies, restoreCopy, type SafetyCopy } from '../lib/db/safety';
   import { db } from '../lib/db/schema';
@@ -46,11 +47,6 @@
     settings.backupEvery = days;
     settings.backupSnoozeUntil = 0;
     void saveSettings();
-  }
-
-  function onBodyWeight(e: Event) {
-    const value = Number((e.currentTarget as HTMLInputElement).value.replace(',', '.'));
-    set('bodyWeightKg', Number.isFinite(value) && value > 0 ? value : 0);
   }
 
   const workouts = live(() => db.workouts.where('status').equals('done').count());
@@ -207,17 +203,12 @@
 
   <section class="section">
     <h2 class="section-title">{t('settings.body.title')}</h2>
-    <div class="field">
-      <label class="label" for="body-weight">{t('settings.body.weight')}</label>
-      <input
-        id="body-weight"
-        class="input"
-        type="text"
-        inputmode="decimal"
-        autocomplete="off"
-        value={settings.bodyWeightKg || ''}
-        onchange={onBodyWeight}
-      />
+    <div class="list">
+      <a class="list-item" href="#/body">
+        <span class="body grow"><span class="title">{t('settings.body.weight')}</span></span>
+        <span class="muted">{settings.bodyWeightKg ? fmtKg(settings.bodyWeightKg) : t('settings.body.notSet')}</span>
+        <Icon name="chevron" size={16} />
+      </a>
     </div>
     <p class="hint small muted">{t('settings.body.hint')}</p>
   </section>

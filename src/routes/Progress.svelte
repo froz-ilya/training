@@ -3,6 +3,7 @@
   import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import BodyBalance from '../components/progress/BodyBalance.svelte';
+  import BodyWeightCard from '../components/progress/BodyWeightCard.svelte';
   import ExerciseStatusList from '../components/progress/ExerciseStatusList.svelte';
   import TrainingCalendar from '../components/progress/TrainingCalendar.svelte';
   import TrendPill from '../components/progress/TrendPill.svelte';
@@ -66,6 +67,7 @@
       <p>{t('progress.empty')}</p>
       <a class="btn" href="#/import">{t('progress.emptyAction')}</a>
     </div>
+    <BodyWeightCard />
   {:else}
     <div class="content-in">
       <div class="section first">
@@ -86,6 +88,8 @@
         </div>
         <p class="muted small note">{t('progress.overviewNote')}</p>
       </div>
+
+      <BodyWeightCard />
 
       {#if data.value.groups.length}
         <div class="section">

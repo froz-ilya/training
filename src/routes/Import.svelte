@@ -1,6 +1,7 @@
 <script lang="ts">
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
+  import { syncBodyWeight } from '../lib/bodyWeight';
   import { importHistory, listDays, type ImportResult } from '../lib/db/backup';
   import { FileError, HISTORY_EXAMPLE } from '../lib/db/historyFile';
   import { t, tn } from '../lib/i18n.svelte';
@@ -34,6 +35,7 @@
         throw new FileError(t('import.failed'));
       });
       result = await importHistory(text);
+      await syncBodyWeight();
     } catch (err) {
       // Anything but a FileError came from the database: the user can't act on its wording.
       if (err instanceof FileError) error = err.message;

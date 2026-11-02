@@ -17,6 +17,7 @@
   import Workout from './routes/Workout.svelte';
   import ExercisePage from './routes/ExercisePage.svelte';
   import Import from './routes/Import.svelte';
+  import BodyWeight from './routes/BodyWeight.svelte';
 
   /*
    * Routes (hash based). Tab roots (show the bottom tab bar): /, /history, /progress, /exercises,
@@ -30,6 +31,7 @@
    *   /group/:id        One muscle group: trend, weekly sets, its exercises by status
    *   /exercise/:id     One exercise: chart, records, sessions, settings
    *   /import           Import history from a JSON file
+   *   /body             Body weight: log, chart, past weigh-ins
    * Any other path shows a not-found page with the tab bar, so a bad link is never a dead end.
    * Route components read route.parts / route.query themselves.
    */
@@ -42,6 +44,7 @@
     group: ProgressGroup,
     exercise: ExercisePage,
     import: Import,
+    body: BodyWeight,
   } as const;
 
   // Backup reminder pop-up (waits for the first screen and any workout; once per launch).

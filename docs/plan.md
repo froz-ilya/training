@@ -14,7 +14,8 @@ phase.
 | Exercises | Catalogue and own exercises, searchable in all three languages |
 | Settings | Languages, theme, import, backup and restore |
 
-Sub-pages: workout logger (`/workout/:id`), exercise detail (`/exercise/:id`) and import (`/import`).
+Sub-pages: workout logger (`/workout/:id`), exercise detail (`/exercise/:id`), import (`/import`) and
+body weight (`/body`).
 
 ## Data model
 
@@ -30,6 +31,7 @@ Everything is stored in IndexedDB on the device. The catalogue ships with the ap
 | `baselines` | Machine or gym changes, where comparisons restart |
 | `stallRecords` | What a user tried for a plateau, and whether it worked |
 | `exerciseNotes` | Comments and tags on an exercise or set in a workout |
+| `bodyWeights` | Weigh-ins, one a day |
 | `settings` | App settings |
 
 ## Phases

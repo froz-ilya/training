@@ -101,6 +101,10 @@ migration that is tested.
 - Breaks: the cut grows with time away (src/lib/coach/suggest.ts, `BREAKS`). When other exercises kept the
   muscle trained, half the cut goes, but the muscle's own rest still counts in full. After a break the
   weight climbs a step a session back to the old numbers, then normal progression takes over.
+- Body weight: `bodyWeights` holds one weigh-in a day (src/lib/bodyWeight.ts). An exercise's chart and
+  records read each session at that day's weight. Status, suggestions, new bests and the logger's marks
+  hold every session at the latest weight, kept in `settings.bodyWeightKg`, so a swing on the scales
+  never reads as a change in strength.
 - Comments: `exerciseNotes` holds them, per exercise in a workout or per set through `setId`. Built-in
   tag ids are in src/lib/notes/tags.ts and never change; a user's own tags are in
   `settings.customTags`. A session with an off-day tag doesn't count against an exercise, but a new

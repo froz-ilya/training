@@ -39,7 +39,7 @@ export function isTabRoot(path: string): boolean {
 
 /** Whether a path leads to a page; anything else is a bad link, which gets the not-found page. */
 export function isKnownRoute(path: string): boolean {
-  return isTabRoot(path) || path === '/import' || /^\/(workout|group|exercise)\/[^/]+$/.test(path);
+  return isTabRoot(path) || path === '/import' || path === '/body' || /^\/(workout|group|exercise)\/[^/]+$/.test(path);
 }
 
 let idx = 0;

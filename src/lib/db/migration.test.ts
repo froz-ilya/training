@@ -17,6 +17,7 @@ const V1 = {
   settings: 'id',
   exerciseNotes: 'id, workoutId, exerciseId, [exerciseId+date]',
 };
+const V2 = { ...V1, bodyWeights: 'date' };
 
 function oldDb(version: number, stores: Record<string, string>) {
   const d = new Dexie('training');
@@ -164,12 +165,66 @@ describe('database versions', () => {
     await seedV1();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const db = await openCurrent();
-    const later = oldDb(2, V1);
+    const later = oldDb(3, V2);
     await later.open();
     await expect(db.workouts.put({ ...v1Workout, title: 'Changed' } as never)).rejects.toThrow();
     expect(await later.table('workouts').toArray()).toEqual([v1Workout]);
     later.close();
     warn.mockRestore();
+  });
+
+  it('starts the weight log from the v1 setting, which stays as it was', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { toISODate } = await import('../dates');
+    expect(await db.bodyWeights.toArray()).toEqual([{ date: toISODate(), kg: 70 }]);
+    expect(await db.settings.get('main')).toEqual(v1Settings);
+    db.close();
+  });
+
+  it('starts an empty weight log when v1 had no weight set', async () => {
+    await seedV1();
+    const d = oldDb(1, V1);
+    await d.table('settings').put({ ...v1Settings, bodyWeightKg: 0 });
+    d.close();
+    const db = await openCurrent();
+    expect(await db.bodyWeights.count()).toBe(0);
+    db.close();
+  });
+
+  it('dates the weight in a v1 backup by the day it was made', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { restoreBackup } = await import('./backup');
+    const file = { app: 'training', version: 1, exportedAt: '2026-03-02T10:00:00', data: { workouts: [v1Workout], sets: [v1Set], settings: [v1Settings] } };
+    expect(await restoreBackup(JSON.stringify(file))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.bodyWeights.toArray()).toEqual([{ date: '2026-03-02', kg: 70 }]);
+    db.close();
+  });
+
+  it('restores the weight log from a backup, leaving out what can’t be read', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { restoreBackup } = await import('./backup');
+    const bodyWeights = [{ date: '2026-03-02', kg: 71.5 }, { date: '2026-03-03', kg: 'heavy' }, { date: 'soon', kg: 70 }, { date: '2026-03-04', kg: 0 }];
+    const file = { app: 'training', version: 2, exportedAt: '', data: { workouts: [v1Workout], sets: [v1Set], bodyWeights } };
+    expect(await restoreBackup(JSON.stringify(file))).toEqual({ workouts: 1, dropped: 3 });
+    expect(await db.bodyWeights.toArray()).toEqual([{ date: '2026-03-02', kg: 71.5 }]);
+    db.close();
+  });
+
+  it('adds a backup’s weigh-ins once, keeping the ones on the device', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    await db.bodyWeights.clear();
+    await db.bodyWeights.put({ date: '2026-03-02', kg: 69 });
+    const { importHistory } = await import('./backup');
+    const bodyWeights = [{ date: '2026-03-02', kg: 71 }, { date: '2026-03-09', kg: 72 }];
+    const text = JSON.stringify({ app: 'training', version: 2, exportedAt: '', data: { workouts: [], sets: [], bodyWeights } });
+    await importHistory(text);
+    await importHistory(text);
+    expect(await db.bodyWeights.toArray()).toEqual([{ date: '2026-03-02', kg: 69 }, { date: '2026-03-09', kg: 72 }]);
+    db.close();
   });
 
   it('lists every table in USER_TABLES, so backups miss nothing', async () => {

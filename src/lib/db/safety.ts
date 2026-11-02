@@ -1,10 +1,12 @@
 import Dexie from 'dexie';
 import { db, DB_NAME, SCHEMA_VERSION, schemaVersionOf, USER_TABLES } from './schema';
 import { MUSCLES } from '../catalog/exercises';
+import { toISODate } from '../dates';
 import { normalizeSettings } from '../settings.svelte';
 import type {
   Alias,
   Baseline,
+  BodyWeight,
   CustomExercise,
   Equipment,
   ExerciseNote,
@@ -234,6 +236,19 @@ function normalizeNote(n: ExerciseNote): ExerciseNote {
 }
 
 /**
+ * Weigh-ins, one a day. Data from before the log only has the weight in settings, which held when
+ * the data was saved: `day`, as the upgrade does for data on the device.
+ */
+function normalizeBodyWeights(tables: TableRows, settings: Settings[], day: string): BodyWeight[] {
+  if (!Array.isArray(tables.bodyWeights)) {
+    const kg = settings[0]?.bodyWeightKg ?? 0;
+    return kg > 0 ? [{ date: day, kg }] : [];
+  }
+  const weights = rows<BodyWeight>(tables, 'bodyWeights', 'date').filter((w) => isDay(w.date) && isCount(w.kg) && w.kg > 0);
+  return [...new Map(weights.map((w) => [w.date, w])).values()];
+}
+
+/**
  * Rows from any older version as today's code stores them, whatever a file says. Screens rely on
  * these shapes, so a bad value takes its default and an optional field that can't be read goes.
  * A row is only left out when nothing can be done with it: no key, or no day it belongs to. Sets
@@ -241,9 +256,9 @@ function normalizeNote(n: ExerciseNote): ExerciseNote {
  * know, such as `title`, stay.
  *
  * Add a step here whenever a schema change adds a field or changes a format, so old backups and
- * safety copies keep restoring.
+ * safety copies keep restoring. `day` is when the data was saved, where that's known.
  */
-export function normalizeTables(tables: TableRows): TableRows {
+export function normalizeTables(tables: TableRows, day = toISODate()): TableRows {
   const keyedSets = rows<WorkoutSet>(tables, 'sets', 'id', 'workoutId', 'exerciseId');
   const setDays = new Map(keyedSets.filter((s) => isDay(s.date)).map((s) => [s.workoutId, s.date]));
   const workouts = rows<Workout>(tables, 'workouts', 'id').flatMap((w) => {
@@ -256,6 +271,7 @@ export function normalizeTables(tables: TableRows): TableRows {
     return date ? [normalizeSet({ ...s, date })] : [];
   });
   const exerciseSetting = (s: ExerciseSettings) => dropBad(dropBad(s, isCount, 'stepKg', 'repLow', 'repHigh'), isText, 'machineSetting', 'goal');
+  const settings = rows<Settings>(tables, 'settings', 'id').map(normalizeSettings);
 
   return {
     workouts,
@@ -265,15 +281,16 @@ export function normalizeTables(tables: TableRows): TableRows {
     exerciseSettings: rows<ExerciseSettings>(tables, 'exerciseSettings', 'exerciseId').map(exerciseSetting),
     baselines: rows<Baseline>(tables, 'baselines', 'id', 'exerciseId').filter((b) => isDay(b.date)),
     stallRecords: rows<StallRecord>(tables, 'stallRecords', 'id', 'exerciseId', 'action').filter((r) => isDay(r.date)),
-    settings: rows<Settings>(tables, 'settings', 'id').map(normalizeSettings),
+    settings,
     // Older files can have none.
     exerciseNotes: rows<ExerciseNote>(tables, 'exerciseNotes', 'id').map(normalizeNote),
+    bodyWeights: normalizeBodyWeights(tables, settings, day),
   };
 }
 
-/** How many rows of `source` normalizeTables() left out. */
+/** How many rows of `source` normalizeTables() left out. A table it filled in has nothing left out. */
 export function droppedRows(source: TableRows, tables: TableRows): number {
-  return USER_TABLES.reduce((sum, name) => sum + (Array.isArray(source[name]) ? source[name].length : 0) - tables[name].length, 0);
+  return USER_TABLES.reduce((sum, name) => sum + Math.max(0, (Array.isArray(source[name]) ? source[name].length : 0) - tables[name].length), 0);
 }
 
 /** Swap everything for `tables` in one transaction: a failure leaves the data as it was. */
@@ -295,7 +312,7 @@ export async function replaceAllTables(tables: TableRows): Promise<void> {
 export async function restoreCopy(id: number): Promise<number> {
   const copy = (await listCopies()).find((c) => c.id === id);
   if (!copy) throw new Error(`No safety copy ${id}`);
-  const tables = normalizeTables(copy.tables);
+  const tables = normalizeTables(copy.tables, toISODate(new Date(copy.createdAt)));
   await saveCurrentCopy();
   await replaceAllTables(tables);
   return droppedRows(copy.tables, tables);

@@ -2,9 +2,9 @@ import type { IndexableType } from 'dexie';
 import { FileError, historyTables, isHistoryFile } from './historyFile';
 import { db, SCHEMA_VERSION, USER_TABLES } from './schema';
 import { droppedRows, normalizeTables, readAllTables, readInstalled, replaceAllTables, saveCurrentCopy, type TableRows } from './safety';
-import { fmtDate } from '../dates';
+import { fmtDate, toISODate } from '../dates';
 import { t, tn } from '../i18n.svelte';
-import type { Alias, Baseline, CustomExercise, ExerciseNote, ExerciseSettings, Settings, StallRecord, Workout, WorkoutSet } from '../types';
+import type { Alias, Baseline, BodyWeight, CustomExercise, ExerciseNote, ExerciseSettings, Settings, StallRecord, Workout, WorkoutSet } from '../types';
 
 /**
  * A backup is one JSON file the user keeps somewhere safe. `version` is the schema version of the
@@ -83,10 +83,10 @@ export function readBackup(text: string): BackupContents {
     throw new FileError(t('settings.restore.notBackup'));
   }
   if (file.version! > SCHEMA_VERSION) throw new FileError(t('settings.restore.newer'));
-  const tables = normalizeTables(data);
+  const madeAt = Math.min(Date.parse(file.exportedAt ?? ''), Date.now());
+  const tables = normalizeTables(data, Number.isNaN(madeAt) ? undefined : toISODate(new Date(madeAt)));
   if (data.workouts.length && !tables.workouts.length) throw new FileError(t('settings.restore.damaged'));
   // Restoring proves this backup exists, whatever the settings inside it knew when it was made.
-  const madeAt = Math.min(Date.parse(file.exportedAt ?? ''), Date.now());
   for (const row of tables.settings as Settings[]) if (madeAt > row.lastBackupAt) row.lastBackupAt = madeAt;
   return { tables, dropped: droppedRows(data, tables) };
 }
@@ -194,6 +194,7 @@ async function planImport(tables: TableRows) {
     exerciseSettings: await newRows<ExerciseSettings>('exerciseSettings', 'exerciseId', needed(tables.exerciseSettings)),
     baselines: await newRows<Baseline>('baselines', 'id', needed(tables.baselines)),
     stallRecords: await newRows<StallRecord>('stallRecords', 'id', needed(tables.stallRecords)),
+    bodyWeights: await newRows<BodyWeight>('bodyWeights', 'date', tables.bodyWeights),
     skippedDays,
   };
 }
@@ -201,7 +202,8 @@ async function planImport(tables: TableRows) {
 /**
  * Adds a file's workouts to the ones on this device. A workout the app already has, or a day it
  * already has a workout for, stays as it is, so importing twice adds nothing. A custom exercise only
- * comes along with a workout that uses it. Settings are left alone. To swap everything for a file,
+ * comes along with a workout that uses it. Weigh-ins fill days the log doesn't have, so the caller
+ * runs syncBodyWeight() afterwards. Other settings are left alone. To swap everything for a file,
  * use restoreBackup().
  *
  * A safety copy lives in another database, so it can't join the transaction that adds the rows. It
@@ -237,6 +239,7 @@ export async function importHistory(text: string): Promise<ImportResult> {
     await db.exerciseSettings.bulkAdd(plan.exerciseSettings);
     await db.baselines.bulkAdd(plan.baselines);
     await db.stallRecords.bulkAdd(plan.stallRecords);
+    await db.bodyWeights.bulkAdd(plan.bodyWeights);
     return result(plan);
   });
 }

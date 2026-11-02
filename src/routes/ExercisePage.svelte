@@ -16,6 +16,7 @@
     syncStallOutcomes,
     type ExerciseView,
   } from '../lib/coach/data';
+  import { weightOn } from '../lib/bodyWeight';
   import { photoOf } from '../lib/catalog/photos';
   import { needsOptions } from '../lib/coach/plateau';
   import { markSameMachine } from '../lib/coach/sameMachine';
@@ -23,6 +24,7 @@
   import { exerciseRecords } from '../lib/coach/summary';
   import { fmtKg, fmtSeconds, fmtSet, statusText } from '../lib/coach/text';
   import { fmtDate } from '../lib/dates';
+  import { db } from '../lib/db/schema';
   import { nameOf } from '../lib/exercises.svelte';
   import { fmtNumber, t, tn } from '../lib/i18n.svelte';
   import { live } from '../lib/live.svelte';
@@ -38,6 +40,7 @@
 
   const id = route.parts[1] ?? '';
   const data = live(() => loadExerciseView(id));
+  const weighIns = live(() => db.bodyWeights.orderBy('date').toArray());
   onMount(() => void syncStallOutcomes());
 
   let showAll = $state(false);
@@ -46,6 +49,8 @@
 
   const view = $derived(data.value ?? null);
   const body = $derived(bodyKg(settings.bodyWeightKg));
+  /** The chart and records read each session at what the user weighed that day. */
+  const bodyOn = (date: string) => weightOn(weighIns.value ?? [], date) ?? body;
   const isTime = $derived(view?.exercise.load === 'time');
   const isBody = $derived(view?.exercise.load === 'body');
   const photo = $derived(view ? photoOf(view.exercise.id) : undefined);
@@ -55,7 +60,7 @@
     const { load } = view.exercise;
     const points: TrendPoint[] = [];
     for (const session of view.sessions) {
-      const value = sessionStrength(session, load, body);
+      const value = sessionStrength(session, load, bodyOn(session.date));
       const top = topSet(session);
       if (value === null || !top) continue;
       points.push({
@@ -69,7 +74,7 @@
   });
 
   /** Records follow what's compared: another level or machine isn't the same number. */
-  const records = $derived(view ? exerciseRecords(view.compared, view.exercise.load, body) : null);
+  const records = $derived(view ? exerciseRecords(view.compared, view.exercise.load, bodyOn) : null);
   /** The heading explains the numbers once, so the table doesn't repeat kg in every cell. */
   const showUnit = $derived(!isTime && !!view?.sessions.some((s) => s.sets.some((set) => set.weightKg > 0)));
   const range = $derived(view ? repRange(view.exercise, view.setting, view.compared) : null);

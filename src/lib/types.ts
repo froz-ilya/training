@@ -9,7 +9,7 @@ export interface Settings {
   /** Language exercise names are shown in; 'auto' follows the interface. */
   exerciseLang: UiLangSetting;
   theme: ThemeSetting;
-  /** Used to compare bodyweight exercises; 0 = not set. */
+  /** The latest weigh-in, which comparisons hold every session at; 0 = not set. See bodyWeight.ts. */
   bodyWeightKg: number;
   /** Workouts a week the user aims for; 0 = work it out from their history. */
   workoutsPerWeek: number;
@@ -164,6 +164,13 @@ export interface ExerciseSettings {
   repLow?: number;
   repHigh?: number;
   goal?: ExerciseGoal;
+}
+
+/** A weigh-in. A day holds one: weighing in again replaces it. */
+export interface BodyWeight {
+  /** Local date, YYYY-MM-DD. */
+  date: string;
+  kg: number;
 }
 
 /** A machine or gym change: comparisons of the exercise restart from this date. */

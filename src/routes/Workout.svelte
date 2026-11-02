@@ -267,10 +267,7 @@
   }
 
   function finish(unchecked: 'done' | 'discard') {
-    return save(finishWorkout(id, unchecked), (kept) => {
-      if (kept) showToast(t('workout.saved'));
-      leave();
-    });
+    return save(finishWorkout(id, unchecked), (kept) => (kept ? replace(`/summary/${id}?finished=1`) : leave()));
   }
 
   async function askFinish() {
@@ -297,6 +294,7 @@
     if (!workout) return;
     const items: ActionItem[] = [{ label: t('workout.details'), icon: 'edit', run: () => void (detailsOpen = true) }];
     if (workout.status === 'done') {
+      items.push({ label: t('workout.summary'), icon: 'chart', run: () => go(`/summary/${id}`) });
       items.push({
         label: t('workout.repeat'),
         icon: 'refresh',

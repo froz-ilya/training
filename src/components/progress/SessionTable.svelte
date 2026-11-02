@@ -1,11 +1,11 @@
 <script lang="ts">
   import NoteChips from '../notes/NoteChips.svelte';
   import { isTimed, sessionCells } from '../../lib/coach/overview';
-  import { workSets, type Session, type SessionSet } from '../../lib/coach/strength';
+  import { comparableBefore, workSets, type Session, type SessionSet } from '../../lib/coach/strength';
   import { fmtKg, fmtSeconds, fmtSet } from '../../lib/coach/text';
   import { fmtDate, toISODate } from '../../lib/dates';
   import { fmtNumber, t } from '../../lib/i18n.svelte';
-  import { comparableBefore, fmtLevel } from '../workout/display';
+  import { fmtLevel } from '../workout/display';
   import type { Baseline, Load } from '../../lib/types';
 
   /**

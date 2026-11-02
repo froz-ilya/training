@@ -1,12 +1,16 @@
 import { CATALOG, catalogExercise } from '../catalog/exercises';
 import { groupOf, mainGroups, type MuscleGroup } from '../catalog/groups';
 import { daysBetween, toISODate } from '../dates';
-import { effectiveHistory } from '../db/repo';
+import { effectiveHistory, lastPerformance } from '../db/repo';
 import { db, newId } from '../db/schema';
 import { settings } from '../settings.svelte';
 import { hasPain, isOffDay } from '../notes/tags';
-import type { Baseline, BodyRegion, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, WorkoutSet } from '../types';
+import { groupEntries } from '../workout/entries';
+import { workoutMinutes } from '../workout/format';
+import { groupWork } from '../workout/title';
+import type { Baseline, BodyRegion, Exercise, ExerciseNote, ExerciseSettings, Muscle, StallAction, StallRecord, Workout, WorkoutSet } from '../types';
 import { bodyLoad, keptTrainingUntil, type BodyLoad } from './balance';
+import { compareExercise, pairSets, type ExerciseComparison } from './compare';
 import { priorWork, type WorkoutRow } from './fatigue';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
 import { planNextType, rotationTypeCount, typeGroups, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
@@ -15,7 +19,7 @@ import { countRecent, groupSummaries, type GroupSummary, type Overview } from '.
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
 import { exerciseStatus, type ExerciseStatus } from './status';
-import { atLatestLevel, bodyKg, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
+import { atLatestLevel, bodyKg, comparableBefore, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
 import { BREAK_MIN_DAYS, suggestSets, type SetPlan, type Suggestion } from './suggest';
 import { calendarWeeks, newBests, weeklyVolume, type CalendarDay, type NewBest, type WeekVolume } from './summary';
 
@@ -358,6 +362,92 @@ export async function loadProgress(): Promise<ProgressData> {
     calendar,
     workouts: workouts.size,
     workoutsInCalendar: calendar.flat().filter((d) => d.trained).length,
+  };
+}
+
+/** One exercise card in a finished workout, so an exercise done twice reads as it did in the logger. */
+export interface SummaryExercise {
+  exerciseId: string;
+  entry: number;
+  /** Missing when the exercise no longer exists. */
+  exercise?: Exercise;
+  sets: WorkoutSet[];
+  /** Against the session before, as the marks in the logger read it. */
+  comparison: ExerciseComparison | null;
+  /** There's no session before this one. */
+  first: boolean;
+  /** A machine or gym change lies between this session and the one before, so they aren't compared. */
+  restarted: boolean;
+  /** A tag says this session doesn't reflect the exercise. */
+  offDay: boolean;
+}
+
+export interface WorkoutSummary {
+  workout: Workout;
+  groups: MuscleGroup[];
+  /** Null when the time isn't known or can't be right. */
+  minutes: number | null;
+  workSets: number;
+  exercises: SummaryExercise[];
+  /** New bests this workout set, as Progress counts them. */
+  bests: (NewBest & { exercise: Exercise })[];
+}
+
+/** What a finished workout came to, worked out on reading. Null for any other workout. */
+export async function loadWorkoutSummary(id: string): Promise<WorkoutSummary | null> {
+  const workout = await db.workouts.get(id);
+  if (workout?.status !== 'done') return null;
+  const [{ sets: finished }, stored, notes, exercises, { positionCost }] = await Promise.all([
+    finishedSets(),
+    readStored(),
+    db.exerciseNotes.where('workoutId').equals(id).toArray(),
+    exerciseMap(),
+    loadTraining(),
+  ]);
+  const sets = finished.filter((s) => s.workoutId === id);
+  const body = bodyKg(settings.bodyWeightKg);
+  const entries = groupEntries(sets);
+
+  const rows = await Promise.all(
+    entries.map(async ({ entry, exerciseId, sets }, index): Promise<SummaryExercise> => {
+      const exercise = exercises.get(exerciseId);
+      const offDay = isOffDay(notes.filter((n) => n.exerciseId === exerciseId), settings.customTags);
+      const row = { exerciseId, entry, exercise, sets, comparison: null, first: false, restarted: false, offDay };
+      const last = await lastPerformance(exerciseId, { before: workout.date, excludeWorkoutId: id });
+      if (!last) return { ...row, first: true };
+      if (!comparableBefore<{ date: string }>(workout, last, stored.baselines.get(exerciseId) ?? [])) return { ...row, restarted: true };
+      const work = sets.filter((s) => s.kind === 'work');
+      const before = pairSets(work, last.sets).filter((s) => s !== undefined);
+      const prior = await loadPriorWork(exerciseId, id, entry, last.workoutId);
+      const comparison = compareExercise(work, before, {
+        position: index + 1,
+        previousPosition: last.position,
+        cost: positionCost,
+        load: exercise?.load ?? 'weight',
+        bodyKg: body,
+        offDay,
+        priorWork: prior.today,
+        previousPriorWork: prior.previous,
+      });
+      return { ...row, comparison };
+    }),
+  );
+
+  const ranks = entryRanks(finished);
+  const perExercise = group(finished, (s) => s.exerciseId);
+  const bests = [...new Set(entries.map((e) => e.exerciseId))].flatMap((exerciseId) => {
+    const exercise = exercises.get(exerciseId);
+    if (!exercise) return [];
+    const compared = atLatestLevel(sinceBaseline(toSessions(perExercise.get(exerciseId) ?? [], ranks), stored.baselines.get(exerciseId) ?? []));
+    return newBests(compared, exercise.load, body).filter((b) => b.workoutId === id).map((b) => ({ ...b, exercise }));
+  });
+  return {
+    workout,
+    groups: mainGroups(groupWork(sets, exercises)),
+    minutes: workoutMinutes(workout),
+    workSets: sets.filter((s) => s.kind === 'work').length,
+    exercises: rows,
+    bests,
   };
 }
 

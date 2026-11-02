@@ -105,6 +105,11 @@ migration that is tested.
   records read each session at that day's weight. Status, suggestions, new bests and the logger's marks
   hold every session at the latest weight, kept in `settings.bodyWeightKg`, so a swing on the scales
   never reads as a change in strength.
+- Workout summary (`/summary/:id`, src/lib/coach/data.ts): shown after finishing and from a past
+  workout's menu. Nothing in it is stored. Each exercise card is one row. Changes come from
+  `compareExercise()` and new bests from `newBests()`, the same rules as the logger's marks and
+  Progress. No change is shown across a machine or gym change. A time over 5 hours means the workout
+  was left open, so it isn't shown.
 - Comments: `exerciseNotes` holds them, per exercise in a workout or per set through `setId`. Built-in
   tag ids are in src/lib/notes/tags.ts and never change; a user's own tags are in
   `settings.customTags`. A session with an off-day tag doesn't count against an exercise, but a new

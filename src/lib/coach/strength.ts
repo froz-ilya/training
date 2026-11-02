@@ -304,6 +304,12 @@ export function restartDate(sessions: { date: string }[], baselines: Baseline[])
   return from && sessions.some((s) => s.date < from) ? from : undefined;
 }
 
+/** The session another is held against: none when a machine or gym change lies between the two. */
+export function comparableBefore<T extends { date: string }>(session: T, before: T | undefined, baselines: { date: string }[]): T | undefined {
+  // A session on the day of a change already counts as after it, like sinceBaseline.
+  return before && baselines.some((b) => before.date < b.date && b.date <= session.date) ? undefined : before;
+}
+
 export interface RepRange {
   low: number;
   high: number;

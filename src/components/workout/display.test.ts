@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { changeText, comparableBefore, fmtCompact, fmtPlanned, isPlan, levelNote, percentValue, signed, weightCell, weightHeading } from './display';
+import { comparableBefore } from '../../lib/coach/strength';
+import { changeText, fmtCompact, fmtPlanned, isPlan, levelNote, percentValue, signed, weightCell, weightHeading } from './display';
 
 const change = (deltaKg: number, deltaReps: number, deltaSeconds = 0) => ({
   trend: 'up' as const,

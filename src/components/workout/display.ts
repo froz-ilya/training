@@ -91,12 +91,6 @@ export function isPlan(set: Numbers & { done: boolean }, previous: Numbers | und
   );
 }
 
-/** The session a table row is held against: none when a machine or gym change lies between the two. */
-export function comparableBefore<T extends { date: string }>(session: T, before: T | undefined, baselines: { date: string }[]): T | undefined {
-  // A session on the day of a change already counts as after it, like sinceBaseline.
-  return before && baselines.some((b) => before.date < b.date && b.date <= session.date) ? undefined : before;
-}
-
 /** The step this user moves in when last time's weights show it, like 0.625 on some cables. */
 export function stepFor(exercise: Exercise | undefined, settings: ExerciseSettings | undefined, lastWeights: number[]): number {
   return settings?.stepKg || learnStep(lastWeights) || weightStep(exercise, settings);

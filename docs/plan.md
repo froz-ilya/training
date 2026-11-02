@@ -14,8 +14,8 @@ phase.
 | Exercises | Catalogue and own exercises, searchable in all three languages |
 | Settings | Languages, theme, import, backup and restore |
 
-Sub-pages: workout logger (`/workout/:id`), exercise detail (`/exercise/:id`), import (`/import`) and
-body weight (`/body`).
+Sub-pages: workout logger (`/workout/:id`), workout summary (`/summary/:id`), exercise detail
+(`/exercise/:id`), import (`/import`) and body weight (`/body`).
 
 ## Data model
 

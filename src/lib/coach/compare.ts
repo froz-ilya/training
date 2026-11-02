@@ -149,7 +149,7 @@ export function compareExercise(
 
   let trend: ExerciseComparison['trend'] = 'same';
   let fatigued: Muscle | undefined;
-  if (percent > SAME_BAND || moreRepsAtSameWeight(matched, before)) trend = 'up';
+  if (percent > SAME_BAND || (load !== 'time' && moreRepsAtSameWeight(matched, before))) trend = 'up';
   else if (percent < -SAME_BAND) {
     const explained = expectedPercent < 0 && percent >= expectedPercent - SAME_BAND;
     trend = offDay || explained ? 'expected' : 'down';

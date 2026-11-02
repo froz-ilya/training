@@ -43,6 +43,7 @@ export function exerciseRecords(sessions: Session[], load: Load, body: number | 
 
 export interface NewBest {
   date: string;
+  workoutId: string;
   set: SessionSet;
   /** Improvement over the previous best, as a share. */
   gain: number;
@@ -62,7 +63,7 @@ export function newBests(sessions: Session[], load: Load, body: number): NewBest
         top = set;
       }
     }
-    if (top && best > 0 && value > best * IMPROVEMENT) bests.unshift({ date: session.date, set: top, gain: value / best - 1 });
+    if (top && best > 0 && value > best * IMPROVEMENT) bests.unshift({ date: session.date, workoutId: session.workoutId, set: top, gain: value / best - 1 });
     if (value > best) best = value;
   }
   return bests;

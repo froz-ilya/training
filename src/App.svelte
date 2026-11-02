@@ -18,6 +18,7 @@
   import ExercisePage from './routes/ExercisePage.svelte';
   import Import from './routes/Import.svelte';
   import BodyWeight from './routes/BodyWeight.svelte';
+  import Summary from './routes/Summary.svelte';
 
   /*
    * Routes (hash based). Tab roots (show the bottom tab bar): /, /history, /progress, /exercises,
@@ -28,6 +29,7 @@
    *   /exercises        Catalogue and own exercises
    *   /settings         Languages, theme, import, backup
    *   /workout/:id      Logger for an active workout, editor for a past one
+   *   /summary/:id      What a finished workout came to: time, sets, new bests, change per exercise
    *   /group/:id        One muscle group: trend, weekly sets, its exercises by status
    *   /exercise/:id     One exercise: chart, records, sessions, settings
    *   /import           Import history from a JSON file
@@ -41,6 +43,7 @@
     exercises: Exercises,
     settings: Settings,
     workout: Workout,
+    summary: Summary,
     group: ProgressGroup,
     exercise: ExercisePage,
     import: Import,

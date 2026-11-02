@@ -85,6 +85,8 @@
   /** A bodyweight exercise has no machine to set, unless the user already noted something here. */
   const showMachine = $derived(view?.exercise.equipment !== 'bodyweight' || !!view?.setting?.machineSetting);
   const formatValue = (value: number) => (isTime ? fmtSeconds(value) : fmtNumber(Math.round(value)));
+  /** Don't suggest wins, whatever else a row holds. */
+  const suggesting = $derived(view?.setting?.avoid ? 'no' : view?.setting?.sometimes ? 'sometimes' : 'yes');
 
   async function restart() {
     if (!view) return;
@@ -278,22 +280,31 @@
           <span class="label" id="suggestions">{t('exercise.setting.suggestions')}</span>
           <div class="segmented" role="group" aria-labelledby="suggestions">
             <button
-              class:active={!view.setting?.avoid}
-              aria-pressed={!view.setting?.avoid}
-              onclick={() => view?.setting?.avoid && saveExerciseSettings(view.exercise.id, { avoid: undefined })}
+              class:active={suggesting === 'yes'}
+              aria-pressed={suggesting === 'yes'}
+              onclick={() => view && suggesting !== 'yes' && saveExerciseSettings(view.exercise.id, { avoid: undefined, sometimes: undefined })}
             >
               {t('exercise.suggest.yes')}
             </button>
             <button
-              class:active={!!view.setting?.avoid}
-              aria-pressed={!!view.setting?.avoid}
-              onclick={() => view && saveExerciseSettings(view.exercise.id, { avoid: true })}
+              class:active={suggesting === 'sometimes'}
+              aria-pressed={suggesting === 'sometimes'}
+              onclick={() => view && saveExerciseSettings(view.exercise.id, { avoid: undefined, sometimes: true })}
+            >
+              {t('exercise.suggest.sometimes')}
+            </button>
+            <button
+              class:active={suggesting === 'no'}
+              aria-pressed={suggesting === 'no'}
+              onclick={() => view && saveExerciseSettings(view.exercise.id, { avoid: true, sometimes: undefined })}
             >
               {t('exercise.suggest.no')}
             </button>
           </div>
-          {#if view.setting?.avoid}
-            <p class="muted small flat avoided">{t('exercise.suggest.avoided')}</p>
+          {#if suggesting === 'no'}
+            <p class="muted small flat suggest-hint">{t('exercise.suggest.avoided')}</p>
+          {:else if suggesting === 'sometimes'}
+            <p class="muted small flat suggest-hint">{t('exercise.suggest.sometimesHint')}</p>
           {/if}
         </div>
       </div>
@@ -358,7 +369,7 @@
   .flat {
     margin: 0;
   }
-  .avoided {
+  .suggest-hint {
     margin-left: 4px;
   }
   .tiles {

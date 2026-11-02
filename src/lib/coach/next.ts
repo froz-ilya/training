@@ -7,6 +7,7 @@ import { HELPER_WEIGHT } from './fatigue';
 import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
 import { expectedGapDays } from './frequency';
 import { median } from './position';
+import { sometimesState, type SometimesPick } from './sometimes';
 import { replaceAvoided, type StandIn } from './standIn';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -61,6 +62,8 @@ export interface PlannedType {
   focus: FocusPick[];
   /** Exercises in the plan that take the place of an avoided one. */
   standIns: StandIn[];
+  /** The exercise marked Sometimes that's in the plan because it's due. */
+  sometimes?: SometimesPick;
   /** The muscles usually trained with each type, which are part of what it's called. */
   partners: Record<string, Muscle[]>;
 }
@@ -412,6 +415,8 @@ function reasonWithLead(reason: VariantReason | null, lead: string | undefined):
  * type, and a suggested type with nothing left to the next in `otherTypes` that has something, with no
  * `typeReason`, since that isn't why the rotation chose it. `otherTypes` leaves out what has nothing
  * left. Null with no history, when nothing can be planned, or when a type picked has nothing left.
+ * Exercises in `sometimes` rest until they're due, and then come in whatever the rotation has
+ * forgotten, which needs `pace` too: see sometimes.ts. One that leads its variant stays.
  */
 export function planNextType(
   workouts: RotationWorkout[],
@@ -420,8 +425,9 @@ export function planNextType(
   pick: NextPick = {},
   goals: Partial<Record<BodyRegion, RegionGoal>> = {},
   avoid: ReadonlySet<string> = new Set(),
+  sometimes: ReadonlySet<string> = new Set(),
 ): PlannedType | null {
-  const plan = (choice: NextPick) => planType(workouts, exercises, pace, choice, goals, avoid);
+  const plan = (choice: NextPick) => planType(workouts, exercises, pace, choice, goals, avoid, sometimes);
   if (!avoid.size) return plan(pick);
 
   const planned = (choice: NextPick): PlannedType | null => {
@@ -443,6 +449,7 @@ function planType(
   pick: NextPick,
   goals: Partial<Record<BodyRegion, RegionGoal>>,
   avoid: ReadonlySet<string>,
+  sometimes: ReadonlySet<string>,
 ): PlannedType | null {
   const usable = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id))).slice(-WINDOW);
   if (!usable.length) return null;
@@ -464,7 +471,11 @@ function planType(
   const full = own.filter((w) => !w.combined);
   const latest = full.length ? full[full.length - 1] : own[own.length - 1];
   const everDone = doneExercises(workouts, exercises);
-  const { exerciseIds: known, standIns } = replaceAvoided(latest.exerciseIds.filter((id) => exercises.has(id)), exercises, avoid, everDone);
+  const { exerciseIds: base, standIns } = replaceAvoided(latest.exerciseIds.filter((id) => exercises.has(id)), exercises, avoid, everDone);
+  const { due, resting, lastDone } = pace ? sometimesState(workouts, exercises, sometimes, avoid, pace.today) : { due: [], resting: new Set<string>(), lastDone: new Map<string, string>() };
+  const unplanned = new Set([...avoid, ...resting]);
+  // The plan copies the last workout, so without this one done once would be there every time.
+  const known = base.filter((id) => !resting.has(id) || id === variant);
   const leadIn = (list: StandIn[]) => (avoid.has(variant) ? list.find((s) => s.instead === variant)?.exerciseId : variant);
   const sizes = scope.map((w) => w.exerciseIds.length).sort((a, b) => a - b);
   const size = Math.min(MAX_EXERCISES, Math.max(MIN_EXERCISES, sizes[Math.floor(sizes.length / 2)]));
@@ -473,7 +484,7 @@ function planType(
   const lastUsed = new Map<string, string>();
   for (const workout of scope) for (const id of workout.exerciseIds) lastUsed.set(id, workout.date);
   // A stand-in has its slot already, so it can't also rotate into another one.
-  const open = (id: string) => !avoid.has(id) && !standIns.some((s) => s.exerciseId === id);
+  const open = (id: string) => !unplanned.has(id) && !standIns.some((s) => s.exerciseId === id);
   const pool = [...lastUsed.keys()]
     .filter((id) => exercises.has(id) && open(id) && !kept.includes(id) && (!known.includes(id) || lastUsed.get(id) !== latest.date))
     .sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
@@ -487,11 +498,16 @@ function planType(
     const next = swap ?? id;
     if (!chosen.includes(next)) chosen.push(next);
   }
+  const topUp = (ids: string[]) => {
+    for (const id of ids) {
+      if (chosen.length >= size) break;
+      if (!chosen.includes(id)) chosen.push(id);
+    }
+  };
   // A shorter last workout than usual: top up from the pool.
-  for (const id of pool) {
-    if (chosen.length >= size) break;
-    if (!chosen.includes(id)) chosen.push(id);
-  }
+  topUp(pool);
+  // A resting exercise leaves a slot, and the swaps above may have used the pool up.
+  if (known.length < base.length) topUp(known);
 
   const partners: Record<string, Muscle[]> = {};
   for (const type of new Set(keys.filter(Boolean))) partners[type] = partnerMuscles(workoutsOfType(usable, types, type, exercises), type, exercises);
@@ -500,7 +516,7 @@ function planType(
   // A day that skipped a partner shouldn't teach the plan to skip it too. This goes by the variant:
   // one that never has the partner is meant that way.
   const muscleOf = (id: string) => exercises.get(id)?.muscle;
-  const usedInVariant = [...scope].reverse().flatMap((w) => w.exerciseIds).filter((id) => !avoid.has(id));
+  const usedInVariant = [...scope].reverse().flatMap((w) => w.exerciseIds).filter((id) => !unplanned.has(id));
   for (const muscle of partnerMuscles(scope, key, exercises)) {
     const id = usedInVariant.find((candidate) => muscleOf(candidate) === muscle);
     if (id === undefined || chosen.some((c) => muscleOf(c) === muscle)) continue;
@@ -524,7 +540,7 @@ function planType(
       size,
       min: MIN_EXERCISES,
       pool,
-      borrowable: borrowableExercises(usable, types, key, exercises).filter((id) => !avoid.has(id)),
+      borrowable: borrowableExercises(usable, types, key, exercises).filter((id) => !unplanned.has(id)),
       enough: (id) => heldEnough(exercises.get(id)!, active, week),
       needed: (id) => trainsShortFocus(exercises.get(id)!, active, week),
     },
@@ -543,7 +559,10 @@ function planType(
       recent,
       older: everDone.filter((id) => !recent.includes(id)),
       usualPoints: median(scope.map((workout) => workoutPoints(workout, exercises))),
-      avoid,
+      avoid: unplanned,
+      due,
+      lastDone,
+      full: (id) => heldEnough(exercises.get(id)!, active, week) || fit.reached(exercises.get(id)!.muscle),
     },
     active,
     week,
@@ -560,14 +579,17 @@ function planType(
   const inPlan = standIns.filter((s) => focus.exerciseIds.includes(s.exerciseId));
   // A new stand-in was never the user's own, so its going is no news to them.
   const isNew = (id: string) => standIns.some((s) => s.fresh && s.exerciseId === id);
+  const back = focus.sometimes;
   return {
     key,
     exerciseIds: focus.exerciseIds,
-    leftOut: fit.leftOut.filter((id) => !isNew(id)),
+    // What came back for being due is in the plan after all.
+    leftOut: fit.leftOut.filter((id) => !isNew(id) && !focus.exerciseIds.includes(id)),
     // A focus can take the slot of what was added, and then it isn't there to report.
     added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
     focus: focus.picks.map(({ replaced, overlap, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced, overlap } : focusPick)),
     standIns: inPlan,
+    sometimes: back?.replaced && isNew(back.replaced) ? { exerciseId: back.exerciseId, last: back.last } : back,
     partners,
     typeReason: key === suggestedKey ? typeReason(keys, key) : null,
     otherTypes: [...new Set([suggestedKey, ...leftLongest])].filter((k) => k !== key),

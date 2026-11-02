@@ -270,7 +270,7 @@ export function normalizeTables(tables: TableRows, day = toISODate()): TableRows
     const date = isDay(s.date) ? s.date : workoutDays.get(s.workoutId);
     return date ? [normalizeSet({ ...s, date })] : [];
   });
-  const exerciseSetting = (s: ExerciseSettings) => dropBad(dropBad(dropBad(s, isCount, 'stepKg', 'repLow', 'repHigh'), isText, 'machineSetting', 'goal'), isFlag, 'avoid');
+  const exerciseSetting = (s: ExerciseSettings) => dropBad(dropBad(dropBad(s, isCount, 'stepKg', 'repLow', 'repHigh'), isText, 'machineSetting', 'goal'), isFlag, 'avoid', 'sometimes');
   const settings = rows<Settings>(tables, 'settings', 'id').map(normalizeSettings);
 
   return {

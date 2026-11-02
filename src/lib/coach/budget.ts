@@ -99,6 +99,8 @@ export interface WeekFit {
   leftOut: string[];
   /** Muscles brought in because they're due. */
   added: Muscle[];
+  /** The muscle has its usual count, this plan included. */
+  reached: (muscle: Muscle) => boolean;
 }
 
 /**
@@ -157,5 +159,5 @@ export function fitWeek(plan: WeekPlan, budgets: Map<Muscle, MuscleBudget>, exer
 
   const floor = Math.min(plan.min, plan.exerciseIds.length);
   while (exerciseIds.length < floor) exerciseIds.push(leftOut.shift()!);
-  return { exerciseIds, leftOut, added: [...added] };
+  return { exerciseIds, leftOut, added: [...added], reached };
 }

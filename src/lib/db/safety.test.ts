@@ -389,6 +389,35 @@ describe('normalizeTables', () => {
     const [row] = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', avoid: undefined }] }).exerciseSettings as object[];
     expect('avoid' in row).toBe(false);
   });
+
+  it('keeps the sometimes mark on an exercise setting, and adds none to a row without it', () => {
+    const [marked, plain, off] = normalizeTables({
+      exerciseSettings: [
+        { exerciseId: 'dragon-flag', sometimes: true },
+        { exerciseId: 'plank', repLow: 6 },
+        { exerciseId: 'deadlift', sometimes: false },
+      ],
+    }).exerciseSettings as Record<string, unknown>[];
+    expect(marked).toEqual({ exerciseId: 'dragon-flag', sometimes: true });
+    expect('sometimes' in plain).toBe(false);
+    expect(off.sometimes).toBe(false);
+  });
+
+  it.each([['text', 'yes'], ['a number', 1], ['nothing', null], ['a list', []]])('drops a sometimes mark holding %s and keeps the rest of the row', (_, sometimes) => {
+    const tables = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', repLow: 6, sometimes }] });
+    expect(tables.exerciseSettings).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
+    expect(droppedRows({ exerciseSettings: [{ exerciseId: 'plank', sometimes }] }, tables)).toBe(0);
+  });
+
+  it('leaves nothing of a sometimes mark that was turned off', () => {
+    const [row] = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', sometimes: undefined }] }).exerciseSettings as object[];
+    expect('sometimes' in row).toBe(false);
+  });
+
+  it('keeps both marks on a row that has both', () => {
+    const tables = normalizeTables({ exerciseSettings: [{ exerciseId: 'plank', avoid: true, sometimes: true }] });
+    expect(tables.exerciseSettings).toEqual([{ exerciseId: 'plank', avoid: true, sometimes: true }]);
+  });
 });
 
 describe('isDay', () => {

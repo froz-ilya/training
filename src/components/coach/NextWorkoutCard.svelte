@@ -10,6 +10,7 @@
   import Icon, { type IconName } from '../Icon.svelte';
   import { loadNextWorkout, type NextWorkout } from '../../lib/coach/data';
   import type { NextPick } from '../../lib/coach/next';
+  import { fmtDate } from '../../lib/dates';
   import { nameOf } from '../../lib/exercises.svelte';
   import { t, tn } from '../../lib/i18n.svelte';
   import { typeTitle } from '../../lib/workout/title';
@@ -70,6 +71,15 @@
     return t(fresh ? 'coach.next.focus.addedNew' : 'coach.next.focus.added', names);
   }
 
+  function sometimesReason({ exercise, last, replaced }: NonNullable<NextWorkout['sometimes']>): string {
+    const name = nameOf(exercise);
+    if (replaced) {
+      const old = nameOf(replaced);
+      return last ? t('coach.next.sometimes.swapped', { name, old, date: fmtDate(last) }) : t('coach.next.sometimes.swappedNew', { name, old });
+    }
+    return last ? t('coach.next.sometimes.added', { name, date: fmtDate(last) }) : t('coach.next.sometimes.addedNew', { name });
+  }
+
   /** The heaviest work set: what the suggestion is really about. */
   const topOf = (sets: SetPlan[]) =>
     sets.filter((s) => s.kind === 'work').reduce<SetPlan | undefined>((top, s) => (!top || s.weightKg > top.weightKg ? s : top), undefined);
@@ -85,7 +95,7 @@
 {#if next}
   {@const plan = next}
   {@const reasons = [plan.week.behind, plan.typeReason, plan.reason].filter(Boolean).length}
-  {@const notes = plan.leftOut.length || plan.added.length || plan.focus.length || plan.standIns.length}
+  {@const notes = plan.sometimes || plan.leftOut.length || plan.added.length || plan.focus.length || plan.standIns.length}
   {@const switches = [plan.otherTypes, plan.otherVariants].filter((options) => options.length).length}
   <section class="card next">
     <div class="plan">
@@ -127,6 +137,9 @@
         {/if}
         {#if notes}
           <ul class="notes">
+            {#if plan.sometimes}
+              {@render note('refresh', sometimesReason(plan.sometimes))}
+            {/if}
             {#each plan.focus as pick (pick.exercise.id)}
               {@render note('target', focusReason(pick))}
             {/each}

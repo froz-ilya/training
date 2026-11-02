@@ -166,6 +166,8 @@ export interface ExerciseSettings {
   goal?: ExerciseGoal;
   /** The coach doesn't suggest it. The user can still add it to a workout. */
   avoid?: boolean;
+  /** The coach brings it back when it's been left a while. `avoid` wins if a row has both. */
+  sometimes?: boolean;
 }
 
 /** A weigh-in. A day holds one: weighing in again replaces it. */

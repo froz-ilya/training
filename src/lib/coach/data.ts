@@ -190,6 +190,17 @@ export async function avoidedExercises(): Promise<Exercise[]> {
   return saved.flatMap((s) => exercises.get(s.exerciseId) ?? []);
 }
 
+/** What the user wants to do now and then. Not suggesting an exercise at all wins over that. */
+function sometimesIds(saved: Map<string, ExerciseSettings>): Set<string> {
+  return new Set([...saved.values()].filter((s) => s.sometimes === true && s.avoid !== true).map((s) => s.exerciseId));
+}
+
+/** The exercises the user wants to do now and then, in no particular order. */
+export async function sometimesExercises(): Promise<Exercise[]> {
+  const [saved, exercises] = await Promise.all([db.exerciseSettings.filter((s) => s.sometimes === true && s.avoid !== true).toArray(), exerciseMap()]);
+  return saved.flatMap((s) => exercises.get(s.exerciseId) ?? []);
+}
+
 /** Finished workouts in date order, as the rotation sees them. */
 function toRotation(sets: WorkoutSet[], workouts: Map<string, { date: string }>): RotationWorkout[] {
   const perWorkout = group(sets, (s) => s.workoutId);
@@ -499,6 +510,8 @@ export interface NextWorkout {
   focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion }[];
   /** Exercises planned in place of ones the user doesn't want suggested. */
   standIns: { exercise: Exercise; instead: Exercise; fresh: boolean }[];
+  /** The exercise marked Sometimes that's in because it's due, when it was last done and what it replaced. */
+  sometimes?: { exercise: Exercise; last?: string; replaced?: Exercise };
 }
 
 /**
@@ -517,7 +530,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const ranks = entryRanks(sets);
   const noted = noteIndex(notes);
   const { perWeek } = training;
-  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick, settings.regionGoals, avoidedIds(stored.settings));
+  const plan = planNextType(toRotation(sets, workouts), exercises, { today, perWeek }, pick, settings.regionGoals, avoidedIds(stored.settings), sometimesIds(stored.settings));
   if (!plan) return null;
   const perExercise = group(sets, (s) => s.exerciseId);
   const body = bodyKg(settings.bodyWeightKg);
@@ -544,7 +557,9 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
   const focus = plan.focus.map(({ exerciseId, region, fresh, replaced, overlap }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined, overlap }));
   const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
-  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, standIns };
+  const back = plan.sometimes;
+  const sometimes = back && { exercise: exercises.get(back.exerciseId)!, last: back.last, replaced: back.replaced ? exercises.get(back.replaced) : undefined };
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, standIns, sometimes };
 }
 
 // ---------- Saving ----------

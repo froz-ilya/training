@@ -317,6 +317,36 @@ describe('exercises the app doesn’t suggest, in backups', () => {
   });
 });
 
+describe('exercises marked sometimes, in backups', () => {
+  const backup = (exerciseSettings: object[]) => JSON.stringify({ app: 'training', version: 2, exportedAt: '', data: { workouts: [workout], sets: [set], exerciseSettings } });
+
+  it('carries the mark through a backup, with the rest of the row', async () => {
+    await db.exerciseSettings.put({ exerciseId: 'dragon-flag', repLow: 3, sometimes: true });
+    const text = await fileText();
+    await db.exerciseSettings.clear();
+    expect(await restoreBackup(text)).toEqual({ workouts: 0, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'dragon-flag', repLow: 3, sometimes: true }]);
+  });
+
+  it('writes no mark into a backup once it’s turned off', async () => {
+    await saveExerciseSettings('dragon-flag', { sometimes: true });
+    await saveExerciseSettings('dragon-flag', { sometimes: undefined });
+    expect(JSON.parse(await fileText()).data.exerciseSettings).toEqual([{ exerciseId: 'dragon-flag' }]);
+  });
+
+  it('reads a damaged mark as none, and counts nothing as left out', async () => {
+    expect(await restoreBackup(backup([{ exerciseId: 'plank', repLow: 6, sometimes: 'yes' }]))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.exerciseSettings.toArray()).toEqual([{ exerciseId: 'plank', repLow: 6 }]);
+  });
+
+  it('brings the mark in with a new setting, and changes no setting on the device', async () => {
+    await db.exerciseSettings.put({ exerciseId: 'plank', repLow: 6 });
+    await importHistory(backup([{ exerciseId: 'dragon-flag', sometimes: true }, { exerciseId: 'plank', sometimes: true }]));
+    expect(await db.exerciseSettings.get('dragon-flag')).toEqual({ exerciseId: 'dragon-flag', sometimes: true });
+    expect(await db.exerciseSettings.get('plank')).toEqual({ exerciseId: 'plank', repLow: 6 });
+  });
+});
+
 describe('normalizeSettings', () => {
   it('keeps valid custom tags and drops the rest', () => {
     const good = { id: 'tag-1', label: 'Knee', offDay: true };

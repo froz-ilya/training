@@ -122,6 +122,12 @@ migration that is tested.
   user can still add it by hand. History, the rotation and Progress keep reading it. A plan swaps it for a
   stand-in (src/lib/coach/standIn.ts) that trains the same main region, what the user has done first, or
   drops it if nothing fits. Anything new that suggests an exercise has to leave avoided ones out.
+- Sometimes: `sometimes` in `exerciseSettings` is for a hard exercise the user wants to do now and then
+  (src/lib/coach/sometimes.ts). `avoid` wins if a row has both. It goes by the date last done, not the
+  rotation's window, so skipping it never makes it drop out. From 21 days after it was last done, or if
+  it never was, it's due: one a workout, on a day its muscle can join. It takes a same-muscle filler's
+  place, or waits if that muscle has had its week, or goes on top, or takes another filler's place, with no
+  limit on difficulty. Until then it rests: out of the plan, the pool and Focus, unless it leads its variant.
 
 ## Interface language
 

@@ -3,7 +3,7 @@
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import { lastBackupLabel, runBackup } from '../lib/backupReminder';
-  import { avoidedExercises, saveExerciseSettings } from '../lib/coach/data';
+  import { avoidedExercises, saveExerciseSettings, sometimesExercises } from '../lib/coach/data';
   import { fmtKg } from '../lib/coach/text';
   import { applyBackup, readBackup, type BackupContents } from '../lib/db/backup';
   import { KEEP_COPIES, listCopies, restoreCopy, type SafetyCopy } from '../lib/db/safety';
@@ -16,7 +16,7 @@
   import { loadSettings, saveSettings, settings } from '../lib/settings.svelte';
   import { confirmAction, promptText, showToast } from '../lib/ui/dialogs.svelte';
   import { newId } from '../lib/db/schema';
-  import type { CustomTag, ThemeSetting, UiLangSetting } from '../lib/types';
+  import type { CustomTag, Exercise, ThemeSetting, UiLangSetting } from '../lib/types';
 
   function set<K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) {
     settings[key] = value;
@@ -53,14 +53,15 @@
 
   const workouts = live(() => db.workouts.where('status').equals('done').count());
 
-  // ---------- Exercises the app doesn't suggest ----------
+  // ---------- Exercises the app doesn't suggest, or brings back now and then ----------
+
+  const byName = (list: Exercise[] = []) =>
+    list.map((exercise) => ({ exercise, name: nameOf(exercise) })).sort((a, b) => a.name.localeCompare(b.name, locale()));
 
   const avoidedList = live(() => avoidedExercises());
-  const avoided = $derived(
-    (avoidedList.value ?? [])
-      .map((exercise) => ({ exercise, name: nameOf(exercise) }))
-      .sort((a, b) => a.name.localeCompare(b.name, locale())),
-  );
+  const avoided = $derived(byName(avoidedList.value));
+  const sometimesList = live(() => sometimesExercises());
+  const sometimes = $derived(byName(sometimesList.value));
 
   // ---------- Tags ----------
 
@@ -238,15 +239,27 @@
     <p class="hint small muted">{t('settings.training.hint')}</p>
     {#if avoided.length}
       <div class="label">{t('settings.avoided.title')}</div>
-      <div class="list avoided">
+      <div class="list marked">
         {#each avoided as { exercise, name } (exercise.id)}
           <div class="list-item static">
-            <a class="grow avoided-name" href="#/exercise/{encodeURIComponent(exercise.id)}">{name}</a>
-            <button class="btn avoided-btn" onclick={() => saveExerciseSettings(exercise.id, { avoid: undefined })}>{t('settings.avoided.restore')}</button>
+            <a class="grow marked-name" href="#/exercise/{encodeURIComponent(exercise.id)}">{name}</a>
+            <button class="btn marked-btn" onclick={() => saveExerciseSettings(exercise.id, { avoid: undefined })}>{t('settings.avoided.restore')}</button>
           </div>
         {/each}
       </div>
       <p class="hint small muted">{t('settings.avoided.hint')}</p>
+    {/if}
+    {#if sometimes.length}
+      <div class="label">{t('settings.sometimes.title')}</div>
+      <div class="list marked">
+        {#each sometimes as { exercise, name } (exercise.id)}
+          <div class="list-item static">
+            <a class="grow marked-name" href="#/exercise/{encodeURIComponent(exercise.id)}">{name}</a>
+            <button class="btn marked-btn" onclick={() => saveExerciseSettings(exercise.id, { sometimes: undefined })}>{t('settings.sometimes.restore')}</button>
+          </div>
+        {/each}
+      </div>
+      <p class="hint small muted">{t('settings.sometimes.hint')}</p>
     {/if}
   </section>
 
@@ -362,16 +375,16 @@
     display: flex;
     flex-direction: column;
   }
-  .avoided {
+  .marked {
     margin-top: 4px;
   }
-  .avoided-name {
+  .marked-name {
     color: inherit;
     font-weight: 600;
     text-decoration: none;
     overflow-wrap: anywhere;
   }
-  .avoided-btn {
+  .marked-btn {
     flex-shrink: 0;
     min-height: 36px;
     padding: 4px 10px;

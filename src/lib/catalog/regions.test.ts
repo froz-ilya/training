@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CATALOG, catalogExercise } from './exercises';
-import { BODY_REGIONS, CATALOG_REGIONS, regionsOf } from './regions';
+import { BODY_REGIONS, CATALOG_REGIONS, combinedWork, regionLevels, regionsOf } from './regions';
 
 describe('body regions', () => {
   it('lists every exercise in the catalogue, and nothing else', () => {
@@ -62,5 +62,47 @@ describe('body regions', () => {
     it('has no regions for cardio', () => {
       expect(regionsOf({ id: 'custom-1', muscle: 'cardio' })).toEqual({ main: [], helpers: [] });
     });
+
+    it('skips helpers a damaged backup left unreadable', () => {
+      const plain = { main: ['chest'], helpers: [] };
+      expect(regionsOf({ id: 'custom-1', muscle: 'chest', helpers: ['tail' as never] })).toEqual(plain);
+      expect(regionsOf({ id: 'custom-1', muscle: 'chest', helpers: 'legs' as never })).toEqual(plain);
+    });
+  });
+});
+
+describe('combinedWork', () => {
+  const work = (...ids: string[]) => combinedWork(ids.map((id) => regionsOf(catalogExercise(id)!)));
+
+  it('keeps a region main when another exercise only helps with it', () => {
+    expect(work('barbell-bench-press', 'rope-pushdown')).toEqual({ main: ['chest', 'triceps'], helpers: ['frontDelts'] });
+  });
+
+  it('lists each region once, in the order of the map', () => {
+    expect(work('rope-pushdown', 'barbell-bench-press', 'dumbbell-bench-press')).toEqual({ main: ['chest', 'triceps'], helpers: ['frontDelts'] });
+  });
+
+  it('is empty with nothing that trains a region', () => {
+    expect(work('treadmill')).toEqual({ main: [], helpers: [] });
+    expect(work()).toEqual({ main: [], helpers: [] });
+  });
+});
+
+describe('regionLevels', () => {
+  it('marks main and helper regions, and leaves the rest out', () => {
+    expect(regionLevels(regionsOf(catalogExercise('barbell-bench-press')!))).toEqual({ chest: 'main', triceps: 'helper', frontDelts: 'helper' });
+  });
+
+  it('has only helpers for an exercise with no main region', () => {
+    expect(regionLevels(regionsOf(catalogExercise('burpee')!))).toEqual({ chest: 'helper', quads: 'helper', abs: 'helper' });
+  });
+
+  it('is empty for an exercise with no regions', () => {
+    expect(regionLevels(regionsOf(catalogExercise('treadmill')!))).toEqual({});
+    expect(regionLevels(regionsOf({ id: 'custom-1', muscle: 'fullBody' }))).toEqual({});
+  });
+
+  it('lets main win if a region is listed twice', () => {
+    expect(regionLevels({ main: ['chest'], helpers: ['chest', 'triceps'] })).toEqual({ chest: 'main', triceps: 'helper' });
   });
 });

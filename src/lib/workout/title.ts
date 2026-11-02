@@ -21,7 +21,7 @@ export function groupWork(sets: Pick<WorkoutSet, 'exerciseId' | 'entry' | 'kind'
 }
 
 /** A list that reads as a name; German nouns keep their capitals. */
-function nameList(labels: string[]): string {
+export function nameList(labels: string[]): string {
   const rest = labels.slice(1).map((label) => (i18n.lang === 'de' ? label : label.toLocaleLowerCase(locale())));
   return [labels[0], ...rest].join(', ');
 }

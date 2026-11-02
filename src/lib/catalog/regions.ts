@@ -171,6 +171,26 @@ export function regionsOf(exercise: Pick<Exercise, 'id' | 'muscle' | 'helpers'>)
   const listed = CATALOG_REGIONS.get(exercise.id);
   if (listed) return listed;
   const { main, helpers } = BY_MUSCLE[exercise.muscle];
-  const extra = (exercise.helpers ?? []).flatMap((muscle) => BY_MUSCLE[muscle].main);
+  // This runs while a page draws, and a damaged backup can put anything in `helpers`.
+  const own = Array.isArray(exercise.helpers) ? exercise.helpers : [];
+  const extra = own.flatMap((muscle) => BY_MUSCLE[muscle]?.main ?? []);
   return { main, helpers: [...new Set([...helpers, ...extra])].filter((region) => !main.includes(region)) };
+}
+
+/** What several exercises come to together: a region is main if any of them is mainly for it. */
+export function combinedWork(list: RegionWork[]): RegionWork {
+  const main = BODY_REGIONS.filter((region) => list.some((work) => work.main.includes(region)));
+  const helpers = BODY_REGIONS.filter((region) => !main.includes(region) && list.some((work) => work.helpers.includes(region)));
+  return { main, helpers };
+}
+
+/** How hard an exercise works a region. A region with no level isn't worked. */
+export type RegionLevel = 'main' | 'helper';
+export type RegionLevels = Partial<Record<BodyRegion, RegionLevel>>;
+
+export function regionLevels({ main, helpers }: RegionWork): RegionLevels {
+  const levels: RegionLevels = {};
+  for (const region of helpers) levels[region] = 'helper';
+  for (const region of main) levels[region] = 'main';
+  return levels;
 }

@@ -3,6 +3,7 @@
   import Header from '../components/Header.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import ExercisePhotoCard from '../components/exercises/ExercisePhotoCard.svelte';
+  import MuscleCard from '../components/exercises/MuscleCard.svelte';
   import PlateauOptions from '../components/coach/PlateauOptions.svelte';
   import SetSuggestion from '../components/coach/SetSuggestion.svelte';
   import StatusChip from '../components/coach/StatusChip.svelte';
@@ -18,6 +19,7 @@
   } from '../lib/coach/data';
   import { weightOn } from '../lib/bodyWeight';
   import { photoOf } from '../lib/catalog/photos';
+  import { regionsOf } from '../lib/catalog/regions';
   import { needsOptions } from '../lib/coach/plateau';
   import { markSameMachine } from '../lib/coach/sameMachine';
   import { bodyKg, repRange, sessionStrength, topSet, weightStep } from '../lib/coach/strength';
@@ -118,6 +120,11 @@
     <Header title={nameOf(view.exercise)} backTo="/exercises" />
 
     {#if photo}<ExercisePhotoCard {photo} name={nameOf(view.exercise)} />{/if}
+    <MuscleCard
+      work={regionsOf(view.exercise)}
+      label={t('exercise.muscles.map')}
+      note={view.exercise.id.startsWith('custom-') ? t('exercise.muscles.estimate') : undefined}
+    />
 
     {#if view.sessions.length}
       <div class="card status">

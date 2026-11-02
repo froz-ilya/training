@@ -1,5 +1,6 @@
 import { CATALOG, catalogExercise } from '../catalog/exercises';
 import { groupOf, mainGroups, type MuscleGroup } from '../catalog/groups';
+import { combinedWork, regionsOf, type RegionWork } from '../catalog/regions';
 import { daysBetween, toISODate } from '../dates';
 import { effectiveHistory, lastPerformance } from '../db/repo';
 import { db, newId } from '../db/schema';
@@ -402,6 +403,8 @@ export interface WorkoutSummary {
   /** Null when the time isn't known or can't be right. */
   minutes: number | null;
   workSets: number;
+  /** What the work sets trained. Warm-ups don't count, as on the body map in Progress. */
+  work: RegionWork;
   exercises: SummaryExercise[];
   /** New bests this workout set, as Progress counts them. */
   bests: (NewBest & { exercise: Exercise })[];
@@ -460,6 +463,7 @@ export async function loadWorkoutSummary(id: string): Promise<WorkoutSummary | n
     groups: mainGroups(groupWork(sets, exercises)),
     minutes: workoutMinutes(workout),
     workSets: sets.filter((s) => s.kind === 'work').length,
+    work: combinedWork(sets.flatMap((s) => (s.kind === 'work' && exercises.has(s.exerciseId) ? [regionsOf(exercises.get(s.exerciseId)!)] : []))),
     exercises: rows,
     bests,
   };

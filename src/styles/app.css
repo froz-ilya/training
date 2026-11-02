@@ -128,6 +128,9 @@
   --warn: #ff9d5c;
   /* The body map's "less": a low value, not a warning, and clear of --good for colour-blind eyes */
   --cool: #7fb2ff;
+  /* The exercise page's body map: what an exercise works most, and what only helps */
+  --body-main: var(--accent-strong);
+  --body-helper: color-mix(in srgb, var(--accent-strong) 50%, var(--surface-3));
   --accent-strong: var(--accent);
   --good-strong: var(--good);
   --warn-strong: var(--warn);
@@ -187,6 +190,8 @@
   --bad: #c9283d;
   --warn: #c2410c;
   --cool: #2f6fd6;
+  --body-main: var(--accent-strong);
+  --body-helper: color-mix(in srgb, var(--accent-strong) 50%, var(--surface-3));
   --accent-strong: #875400;
   --good-strong: #116a32;
   --warn-strong: #a63609;

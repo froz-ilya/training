@@ -2,6 +2,7 @@
   import Header from '../components/Header.svelte';
   import Icon from '../components/Icon.svelte';
   import Skeleton from '../components/Skeleton.svelte';
+  import MuscleCard from '../components/exercises/MuscleCard.svelte';
   import { percentValue } from '../components/workout/display';
   import { loadWorkoutSummary, type SummaryExercise } from '../lib/coach/data';
   import { fmtSet } from '../lib/coach/text';
@@ -77,6 +78,13 @@
               </a>
             {/each}
           </div>
+        </div>
+      {/if}
+
+      {#if summary.work.main.length || summary.work.helpers.length}
+        <div class="section">
+          <h2 class="section-title">{t('workout.summary.muscles')}</h2>
+          <MuscleCard work={summary.work} label={t('workout.summary.muscles.map')} />
         </div>
       {/if}
 

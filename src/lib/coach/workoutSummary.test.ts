@@ -167,6 +167,16 @@ describe('loadWorkoutSummary', () => {
     expect(row.comparison?.trend).toBe('up');
   });
 
+  it('adds up what the work sets trained, leaving out warm-ups', async () => {
+    await workout('a', '2026-03-01', [bench([60, 8]), { exerciseId: 'rope-pushdown', sets: [[30, 12]] }, { exerciseId: SQUAT, sets: [[40, 8, 'warmup']] }]);
+    expect((await loadWorkoutSummary('a'))!.work).toEqual({ main: ['chest', 'triceps'], helpers: ['frontDelts'] });
+  });
+
+  it('has no regions from an exercise that no longer exists', async () => {
+    await workout('a', '2026-03-01', [{ exerciseId: 'custom-gone', sets: [[10, 10]] }]);
+    expect((await loadWorkoutSummary('a'))!.work).toEqual({ main: [], helpers: [] });
+  });
+
   it('reads the whole history once, however many exercises there are', async () => {
     const names = [BENCH, SQUAT, 'leg-press', 'pull-up'];
     await workout('w', '2026-03-01', names.map((exerciseId) => ({ exerciseId, sets: [[10, 10]] })));

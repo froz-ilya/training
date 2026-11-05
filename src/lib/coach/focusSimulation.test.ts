@@ -5,7 +5,7 @@ import { fromISODate, toISODate } from '../dates';
 import type { BodyRegion, Exercise, RegionGoal } from '../types';
 import { regionsOf } from '../catalog/regions';
 import { bodyLoad, regionRange, regionStatus, type RegionStatus, type SetRange } from './balance';
-import { focusWeek } from './focus';
+import { extraCounts, focusWeek } from './focus';
 import { planNextType, workoutTypes, type FocusExtra, type FocusPick, type RotationWorkout } from './next';
 import { median } from './position';
 
@@ -121,8 +121,8 @@ function table({ goals, regions }: SimResult): string {
   }).join('\n');
 }
 
-/** What Focus added to a planned workout, in work sets: a new exercise at its usual three. */
-const added = (day: PlannedDay) => day.focus.length * SETS + day.extraSets.length;
+/** What Focus added to a planned workout from its share, in work sets: a new exercise at its usual three. Sets more for small muscles alone are free. */
+const added = (day: PlannedDay, goals: Goals) => day.focus.length * SETS + day.extraSets.filter((e) => extraCounts(exercises.get(e.exerciseId)!, goals)).length;
 
 /** Main work sets each region got in each planned week. */
 function mainSetsPerWeek({ days }: SimResult): Map<BodyRegion, number>[] {
@@ -216,9 +216,10 @@ describe('Focus simulation', () => {
   });
 
   // Later targets, not reached yet: flip `it.fails` to `it` once it is. Hamstrings start from no work
-  // at all and train on one day a week, and they share that day's one free slot with quads. Phase 3
-  // gives the slot to the one that got nothing from Focus over the last 7 days, which here is quads
-  // most weeks: hamstrings stay at 4/wk (9-24) while quads keep 12.
+  // at all and train on one day a week, and they share that day's one free slot with quads. Both are
+  // leg muscles, so they take turns: the slot goes to the one that got nothing from Focus over the last
+  // 7 days, which here is quads most weeks, since the chest day's leg curl counts for hamstrings.
+  // Hamstrings stay at 4/wk (9-24) while quads keep 12.
   it.fails('brings quads and hamstrings both into range', () => {
     const run = runs['quads+hamstrings'];
     for (const region of ['quads', 'hamstrings'] as const) expect(run.regions[region].status, `${region}\n${table(run)}`).toBe('normal');
@@ -231,7 +232,7 @@ describe('Focus simulation', () => {
     for (const [name, run] of Object.entries(runs)) {
       for (const day of run.days) {
         const line = `${name} ${day.date}\n${plans(run)}`;
-        expect(day.givenBefore + added(day), line).toBeLessThanOrEqual(day.budget);
+        expect(day.givenBefore + added(day, run.goals), line).toBeLessThanOrEqual(day.budget);
         const grows = day.extraSets.length > 0 || day.focus.some((pick) => !pick.replaced);
         const minutes = (day.exerciseIds.length * SETS + day.extraSets.length) * MINUTES_PER_SET;
         if (grows) expect(minutes, line).toBeLessThanOrEqual(day.usualMinutes + 15);
@@ -239,18 +240,30 @@ describe('Focus simulation', () => {
     }
   });
 
-  it('gives each of five Focus muscles some Focus work at least every other week', () => {
+  /** Every Focus muscle in `regions` got something from Focus, or more main work than without goals, in each block of `weeksPerBlock` weeks. */
+  const servedEvery = (weeksPerBlock: number, regions: readonly BodyRegion[]) => {
     const run = runs['five muscles'];
     const weeks = mainSetsPerWeek(run);
     const plain = mainSetsPerWeek(baseline);
     const perWeek = WORKOUT_DAYS.length;
-    for (let block = 0; block < weeks.length; block += 2) {
-      const days = run.days.slice(block * perWeek, (block + 2) * perWeek);
-      const sum = (list: Map<BodyRegion, number>[], region: BodyRegion) => list.slice(block, block + 2).reduce((total, week) => total + (week.get(region) ?? 0), 0);
-      for (const region of ['chest', 'quads', 'hamstrings', 'sideDelts', 'biceps'] as const) {
+    for (let block = 0; block < weeks.length; block += weeksPerBlock) {
+      const days = run.days.slice(block * perWeek, (block + weeksPerBlock) * perWeek);
+      const sum = (list: Map<BodyRegion, number>[], region: BodyRegion) =>
+        list.slice(block, block + weeksPerBlock).reduce((total, week) => total + (week.get(region) ?? 0), 0);
+      for (const region of regions) {
         const picked = days.some((day) => day.focus.some((pick) => pick.region === region) || day.extraSets.some((e) => e.region === region));
-        expect(picked || sum(weeks, region) > sum(plain, region), `${region}, weeks ${block + 1}-${block + 2}\n${plans(run)}`).toBe(true);
+        expect(picked || sum(weeks, region) > sum(plain, region), `${region}, weeks ${block + 1}-${block + weeksPerBlock}\n${plans(run)}`).toBe(true);
       }
     }
+  };
+
+  // Big muscles come first on their own day, and get light work on another, so each gets its turn
+  // within two weeks. Small muscles come after them and can wait, but never a month.
+  it('gives each big Focus muscle of five some Focus work at least every other week', () => {
+    servedEvery(2, ['chest', 'quads', 'hamstrings']);
+  });
+
+  it('gives each small Focus muscle of five some Focus work at least every four weeks', () => {
+    servedEvery(4, ['sideDelts', 'biceps']);
   });
 });

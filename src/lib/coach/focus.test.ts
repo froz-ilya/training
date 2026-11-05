@@ -471,16 +471,16 @@ describe('light work on another day', () => {
     expect(picks).toEqual([{ exerciseId: 'leg-extension', region: 'quads', fresh: false, otherDay: true }]);
   });
 
-  it('comes after the picks for muscles that can join, and takes a filler’s place then', () => {
+  it('comes before the picks for small muscles, which take a filler’s place then', () => {
     const recent = [...chestDay.recent, 'lateral-raise', 'rear-delt-fly'];
     const { exerciseIds, picks } = fit({ ...chestDay, recent }, { sideDelts: 'focus', hamstrings: 'focus' }, new Map([['sideDelts', 6]]));
     expect(picks).toEqual([
-      { exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false },
-      { exerciseId: 'lying-leg-curl', region: 'hamstrings', fresh: false, replaced: 'pec-deck', otherDay: true },
+      { exerciseId: 'lying-leg-curl', region: 'hamstrings', fresh: false, otherDay: true },
+      { exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false, replaced: 'pec-deck' },
     ]);
-    expect(exerciseIds).toEqual([...CHEST4.slice(0, 3), 'lateral-raise', 'lying-leg-curl']);
+    expect(exerciseIds).toEqual([...CHEST4.slice(0, 3), 'lying-leg-curl', 'lateral-raise']);
     const two = fit({ ...chestDay, recent }, { sideDelts: 'focus', rearDelts: 'focus', hamstrings: 'focus' });
-    expect(two.picks.map((pick) => pick.region)).toEqual(['sideDelts', 'rearDelts']);
+    expect(two.picks.map((pick) => pick.region)).toEqual(['hamstrings', 'sideDelts']);
   });
 
   it('keeps to the workout’s usual cost and size, and never touches a main lift', () => {
@@ -727,6 +727,15 @@ describe('focusWeek', () => {
     expect(week.earlier.get('chest')).toBe(2);
   });
 
+  it('counts no extra sets on an exercise for small muscles alone', () => {
+    const day = [...CHEST, 'lateral-raise'];
+    const goals: Goals = { chest: 'focus', sideDelts: 'focus' };
+    const thisWeek = withExtra(on(2, day), { 'lateral-raise': 2, 'pec-deck': 1 });
+    const week = read([on(24, day), on(17, day), on(10, day), thisWeek], goals);
+    expect(week.given.get('chest')).toBe(1);
+    expect(week.given.get('sideDelts')).toBe(0);
+  });
+
   it('reads only Focus muscles', () => {
     expect([...read([on(2, CHEST)], { sideDelts: 'focus', chest: 'maintain' }).given.keys()]).toEqual(['sideDelts']);
   });
@@ -796,22 +805,178 @@ describe('Focus’s share of the week', () => {
       expect(slot({ ...legDay, week: share(20, {}, { quads: 4 }) })).toEqual([['seated-leg-curl', 'hamstrings']]);
     });
 
-    it('keeps a new exercise’s sets for the muscle first in line when today can’t serve it', () => {
-      // Hamstrings waited, but can't join a chest day without today's date for light work.
-      const { picks, extra, held } = fit({ ...full, max: 4, recent: [...PRESSES, 'cable-crossover'], week: share(6, { chest: 1 }) }, { chest: 'focus', hamstrings: 'focus' });
+    // Hamstrings waited, but can't join a chest day without today's date for light work.
+    it('keeps a new exercise’s sets for the muscle first in line from a small muscle when today can’t serve it', () => {
+      const { picks, extra, held } = fit({ ...full, max: 4, recent: [...PRESSES, 'lateral-raise'], week: share(6, { sideDelts: 1 }) }, { sideDelts: 'focus', hamstrings: 'focus' });
       expect(picks).toEqual([]);
-      expect(extra).toHaveLength(2);
+      expect(extra).toEqual([]);
       expect(held).toBe('turn');
     });
 
+    it('keeps nothing for it from the day’s own big muscles, which take what they need first', () => {
+      // Once, a waiting hamstrings kept chest to two sets more here.
+      const { picks, extra, held } = fit({ ...full, max: 4, recent: [...PRESSES, 'cable-crossover'], week: share(6, { chest: 1 }) }, { chest: 'focus', hamstrings: 'focus' });
+      expect(picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
+      expect(extra).toEqual([]);
+      expect(held).toBeUndefined();
+    });
+
     it('lets nobody else take the room while the muscle first in line is waiting for it', () => {
-      const roomy = { ...full, max: 4, recent: [...PRESSES, 'lateral-raise'] };
-      expect(fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus' }).extra).toHaveLength(2);
-      const { picks, extra, held } = fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus', sideDelts: 'focus' });
+      // Two sets left: quads would take them, but hamstrings waited and need three for a new exercise.
+      const squats = { ...legDay, exerciseIds: legDay.exerciseIds.slice(0, 2), anchors: legDay.anchors.slice(0, 2), week: share(5, { quads: 3 }) };
+      expect(fit(squats, { quads: 'focus' }, week).extra).toHaveLength(2);
+      const { picks, extra, held } = fit(squats, both, week);
       expect(picks).toEqual([]);
       expect(extra).toEqual([]);
       expect(held).toBe('week');
     });
+
+    it('keeps nothing for a small muscle that waited', () => {
+      const roomy = { ...full, max: 4, recent: [...PRESSES, 'lateral-raise'] };
+      const alone = fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus' });
+      expect(fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus', sideDelts: 'focus' })).toEqual(alone);
+      expect(alone).toMatchObject({ picks: [], extra: [{}, {}], held: 'week' });
+    });
+  });
+});
+
+describe('which Focus muscle goes first', () => {
+  const share = (budget: number, given: Partial<Record<BodyRegion, number>> = {}): FocusWeek => ({
+    budget,
+    given: new Map(Object.entries(given) as [BodyRegion, number][]),
+    earlier: new Map(),
+  });
+  const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
+  const regions = (fit: { picks: { region: BodyRegion }[] }) => fit.picks.map((pick) => pick.region);
+  const LIFTS = ['barbell-squat', 'leg-press', 'lying-leg-curl'];
+  /** One free slot and no filler to give up. */
+  const legDay: FocusPlan = {
+    exerciseIds: LIFTS.slice(0, 2),
+    anchors: LIFTS.slice(0, 2),
+    groups: ['legs'],
+    partners: [],
+    leftOut: [],
+    max: 3,
+    recent: [...LIFTS, 'dumbbell-curl', 'leg-extension'],
+    older: [],
+    usualPoints: 30,
+  };
+
+  it('gives a leg day’s slot to a leg muscle, not to a curl', () => {
+    const goals: Goals = { biceps: 'focus', hamstrings: 'focus', quads: 'focus' };
+    // Biceps are further short than hamstrings, and hamstrings further than quads.
+    const week: RegionSets = new Map([['quads', 3], ['hamstrings', 2]]);
+    expect(fit(legDay, goals, week).picks).toEqual([{ exerciseId: 'lying-leg-curl', region: 'hamstrings', fresh: false }]);
+    // Biceps got nothing from Focus this week, and the leg muscles did.
+    expect(regions(fit({ ...legDay, week: share(20, { hamstrings: 3, quads: 3 }) }, goals, week))).toEqual(['hamstrings']);
+  });
+
+  it('still lets a big muscle that waited go first among big muscles', () => {
+    const goals: Goals = { hamstrings: 'focus', quads: 'focus' };
+    const week: RegionSets = new Map([['quads', 3]]);
+    expect(regions(fit({ ...legDay, week: share(20, { hamstrings: 3 }) }, goals, week))).toEqual(['quads']);
+  });
+
+  it('gives a big muscle’s light work on another day the slot before a small muscle', () => {
+    const CHEST4 = CHEST.slice(0, 4);
+    const chestDay: FocusPlan = {
+      ...legDay,
+      exerciseIds: CHEST4,
+      anchors: CHEST4,
+      groups: ['chest'],
+      max: 5,
+      recent: [...CHEST4, 'lying-leg-curl', 'dumbbell-curl'],
+      today: TODAY,
+      lastMain: new Map([['hamstrings', daysBefore(3)]]),
+      nextGroups: ['back'],
+      nextPartners: [],
+    };
+    const goals: Goals = { biceps: 'focus', hamstrings: 'focus' };
+    expect(fit(chestDay, goals).picks).toEqual([{ exerciseId: 'lying-leg-curl', region: 'hamstrings', fresh: false, otherDay: true }]);
+    expect(regions(fit({ ...chestDay, week: share(20, { hamstrings: 3 }) }, goals))).toEqual(['hamstrings']);
+    // Resting, it leaves the slot to the curl.
+    expect(regions(fit({ ...chestDay, lastMain: new Map([['hamstrings', daysBefore(1)]]) }, goals))).toEqual(['biceps']);
+  });
+
+  describe('among small muscles', () => {
+    const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
+    /** One free slot; side delts are further short than biceps. */
+    const chestDay: FocusPlan = { ...legDay, exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], max: 4, recent: [...PRESSES, 'lateral-raise', 'dumbbell-curl'] };
+    const goals: Goals = { sideDelts: 'focus', biceps: 'focus' };
+    const week: RegionSets = new Map([['biceps', 3]]);
+
+    it('goes to the furthest short', () => {
+      expect(regions(fit(chestDay, goals, week))).toEqual(['sideDelts']);
+    });
+
+    it('doesn’t move one that got nothing from Focus ahead', () => {
+      expect(regions(fit({ ...chestDay, week: share(20, { sideDelts: 3 }) }, goals, week))).toEqual(['sideDelts']);
+    });
+
+    it('keeps no room for one that waited, and never says so', () => {
+      // Two sets left, and biceps waited while side delts didn't: neither new exercise fits.
+      const roomy: FocusPlan = { ...chestDay, max: 5, recent: [...PRESSES, 'lateral-raise', 'dumbbell-curl'] };
+      const held = fit({ ...roomy, week: share(5, { sideDelts: 3 }) }, goals, week);
+      expect(held).toMatchObject({ picks: [], extra: [], held: 'week' });
+      expect(fit({ ...roomy, week: share(6, { sideDelts: 3 }) }, goals, week).picks.map((p) => p.region)).toEqual(['sideDelts']);
+    });
+
+    describe('a set more', () => {
+      const both = [...PRESSES, 'lateral-raise', 'dumbbell-curl'];
+      const full: FocusPlan = { ...chestDay, exerciseIds: both, anchors: both, max: 5, recent: both };
+      const twoSmall = [
+        { exerciseId: 'lateral-raise', region: 'sideDelts' },
+        { exerciseId: 'dumbbell-curl', region: 'biceps' },
+      ];
+
+      it('uses none of the share, so it goes on once that’s used, and says nothing', () => {
+        const used = fit({ ...full, week: share(4, { sideDelts: 4 }) }, goals, week);
+        expect(used.extra).toEqual(twoSmall);
+        expect(used.held).toBeUndefined();
+        expect(fit({ ...full, week: share(0) }, goals, week).extra).toEqual(twoSmall);
+      });
+
+      it('still keeps to four a workout, and to the workout’s length', () => {
+        const arms = [...PRESSES, 'lateral-raise', 'cable-lateral-raise', 'dumbbell-curl', 'hammer-curl', 'rope-pushdown'];
+        const many: FocusPlan = { ...full, exerciseIds: arms, anchors: arms, max: 8, recent: arms, week: share(0) };
+        const all = fit(many, { sideDelts: 'focus', biceps: 'focus', triceps: 'focus' });
+        expect(all.extra).toHaveLength(4);
+        expect(all.held).toBeUndefined();
+        // Five exercises at three sets, and room for one set more.
+        expect(fit({ ...full, week: share(0), maxSets: 16 }, goals, week)).toMatchObject({ extra: [twoSmall[0]], held: 'time' });
+      });
+
+      it('goes after a big muscle’s, which the share still holds back', () => {
+        const withChest = { ...full, week: share(1, { chest: 1 }) };
+        const fitted = fit(withChest, { ...goals, chest: 'focus' }, week);
+        expect(fitted.extra).toEqual(twoSmall);
+        expect(fitted.held).toBe('week');
+        const roomForOne = fit({ ...withChest, week: share(2, { chest: 1 }) }, { ...goals, chest: 'focus' }, week);
+        expect(roomForOne.extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }, ...twoSmall]);
+      });
+    });
+  });
+
+  it('gives a set more by the same order', () => {
+    const day = ['barbell-squat', 'lying-leg-curl', 'dumbbell-curl'];
+    const full: FocusPlan = { ...legDay, exerciseIds: day, anchors: day, max: 3, recent: day };
+    const goals: Goals = { biceps: 'focus', hamstrings: 'focus' };
+    // Biceps are further short.
+    const week: RegionSets = new Map([['hamstrings', 2]]);
+    const both = [
+      { exerciseId: 'lying-leg-curl', region: 'hamstrings' },
+      { exerciseId: 'dumbbell-curl', region: 'biceps' },
+    ];
+    expect(fit(full, goals, week).extra).toEqual(both);
+    expect(fit({ ...full, week: share(1) }, goals, week).extra).toEqual(both);
+    // Hamstrings had some from Focus this week, and biceps had none.
+    expect(fit({ ...full, week: share(4, { hamstrings: 3 }) }, goals, week).extra).toEqual(both);
+    // With the workout's room for one set more, hamstrings get it.
+    expect(fit({ ...full, maxSets: 10 }, goals, week).extra).toEqual(both.slice(0, 1));
+  });
+
+  it('changes nothing without goals', () => {
+    expect(fit({ ...legDay, week: share(20) }, {})).toEqual({ exerciseIds: legDay.exerciseIds, picks: [], extra: [] });
   });
 });
 
@@ -882,12 +1047,19 @@ describe('Focus held back in the plan', () => {
     });
 
   it('says so when the week has had Focus’s share', () => {
-    // Seven extra sets for the lateral raise 3 days ago, of a share of 8.
-    const used = days((w) => ({ ...w, workSets: { ...w.workSets, 'lateral-raise': 8 }, extra: { 'lateral-raise': 7 } }));
-    const next = plan(used, { sideDelts: 'focus' });
+    // Seven extra sets for the leg press 3 days ago, of a share of 8.
+    const used = days((w) => ({ ...w, workSets: { ...w.workSets, 'leg-press': 10 }, extra: { 'leg-press': 7 } }));
+    const next = plan(used, { quads: 'focus', sideDelts: 'focus' });
     expect(next.key).toBe('chest');
     expect(next.focus).toEqual([]);
     expect(next.focusHeld).toBe('week');
+  });
+
+  it('leaves the share whole after sets more for small muscles alone', () => {
+    const used = days((w) => ({ ...w, workSets: { ...w.workSets, 'lateral-raise': 8 }, extra: { 'lateral-raise': 7 } }));
+    const next = plan(used, { sideDelts: 'focus', quads: 'focus' });
+    expect(next.focus).toHaveLength(1);
+    expect(next.focusHeld).toBeUndefined();
   });
 
   it('says nothing when it held nothing back, or without goals', () => {

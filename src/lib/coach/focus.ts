@@ -33,6 +33,39 @@ const ROOM = 1;
 const MAX_EXTRA_SETS = 4;
 /** Muscles that round off any day. Chest, back and legs wait for their own. */
 const ANY_DAY: readonly Muscle[] = ['shoulders', ...SMALL];
+/** The muscle each region is part of, as the catalogue files its exercises. */
+const MUSCLE_OF: Record<BodyRegion, Muscle> = {
+  chest: 'chest',
+  frontDelts: 'shoulders',
+  sideDelts: 'shoulders',
+  rearDelts: 'shoulders',
+  upperBack: 'back',
+  lats: 'back',
+  lowerBack: 'back',
+  biceps: 'biceps',
+  triceps: 'triceps',
+  forearms: 'forearms',
+  abs: 'abs',
+  glutes: 'glutes',
+  quads: 'legs',
+  hamstrings: 'legs',
+  calves: 'calves',
+};
+/**
+ * A region of chest, back or legs, which a day's type is built around: chest, upper back, lats, lower
+ * back, glutes, quads and hamstrings. The rest can join any day: the delts, arms, abs and calves.
+ */
+const isBig = (region: BodyRegion) => !ANY_DAY.includes(MUSCLE_OF[region]);
+
+/**
+ * A set more on this exercise uses Focus's share of the week. One on an exercise mainly for small
+ * muscles alone is free: a set more for them is only a few minutes, and they wait for no day. Which
+ * region a stored set more was for isn't stored, so an exercise mainly for a big Focus muscle too, a
+ * dip for chest and triceps say, always counts, the way it would when it was added for the big one.
+ */
+export function extraCounts(exercise: Exercise, goals: RegionGoals): boolean {
+  return regionsOf(exercise).main.some((region) => isBig(region) && goals[region] === 'focus');
+}
 /** Days a muscle rests after its main work before light work on another day. */
 const REST_DAYS = 2;
 /**
@@ -128,7 +161,8 @@ export const FOCUS_HISTORY_DAYS = (2 + USUAL_FOR_TYPE_WEEKS) * DAYS_IN_WEEK;
 /**
  * Focus's share of the week, read from history alone, and only from what Focus can be shown to have
  * added. Plain work never counts, however often a type is trained, and neither does today's plan.
- *  - Sets Focus added to planned exercises are stored as `extra`, so they count as they are.
+ *  - Sets Focus added to planned exercises are stored as `extra`, so they count as they are, for the
+ *    big muscles the exercise is mainly for. One on an exercise for small muscles alone is free (see extraCounts).
  *  - Light work for chest, back or legs on another of them's day (dayWork()) always counts: that's
  *    what Focus brings in on another day.
  *  - An exercise Focus brought in is stored as any other, so its sets count while it's new to its
@@ -178,8 +212,8 @@ export function focusWeek(
   /** What Focus gave each region in the week `index` weeks back. */
   const gaveIn = (index: number) => {
     const gave = new Map<BodyRegion, number>();
-    const give = (id: string, sets: number) => {
-      if (sets > 0) for (const region of regionsOf(exercises.get(id)!).main) gave.set(region, (gave.get(region) ?? 0) + sets);
+    const give = (id: string, sets: number, only: (region: BodyRegion) => boolean = () => true) => {
+      if (sets > 0) for (const region of regionsOf(exercises.get(id)!).main.filter(only)) gave.set(region, (gave.get(region) ?? 0) + sets);
     };
     const from = index * DAYS_IN_WEEK;
     const before = workouts.filter((workout) => within(workout, from + DAYS_IN_WEEK, USUAL_FOR_TYPE_WEEKS * DAYS_IN_WEEK));
@@ -187,7 +221,8 @@ export function focusWeek(
       const added = (id: string) => Math.min(workout.workSets[id], workout.extra?.[id] ?? 0);
       const usual = (id: string) => workout.workSets[id] - added(id);
       const { own, otherDay } = parts(workout);
-      for (const id of [...own, ...otherDay]) give(id, added(id));
+      // Sets more count for the big muscles only, so a free one for a small muscle never reads as a big one's.
+      for (const id of [...own, ...otherDay]) if (extraCounts(exercises.get(id)!, goals)) give(id, added(id), isBig);
       for (const id of otherDay) give(id, usual(id));
       const types = typesOf(workout);
       const sameType = before.filter((other) => typesOf(other).some((type) => types.includes(type)));
@@ -312,7 +347,7 @@ export interface FocusFit {
  * back every week, but this comes round every three, and a limit would keep out exactly the hard
  * exercises the mark is for.
  *
- * Then it brings in work for the Focus muscles that are short this week, in turn (see below), one
+ * Then it brings in work for the Focus muscles that are short this week, in order (see below), one
  * exercise for each. What the user has done comes first, and only then something new. It can't take
  * the workout more than ROOM over its usual cost, or the next one is tried, and with none left the
  * muscle goes without today. An exercise that also trains what a filler trains takes that filler's place.
@@ -322,21 +357,29 @@ export interface FocusFit {
  * light ones last. A muscle that can't join this day waits for its own.
  *
  * A Focus muscle that can't join this day and is still short may get one light exercise mainly for it
- * here, so a muscle trained one day a week gets a second. One a workout, after the picks for muscles
- * that can join unless it waited longer, and placed the same way. Not within REST_DAYS of its last main work, and not the day
- * before its own day, so it comes rested to the work that counts most.
+ * here, so a muscle trained one day a week gets a second. One a workout, and placed the same way. Not
+ * within REST_DAYS of its last main work, and not the day before its own day, so it comes rested to the
+ * work that counts most.
  *
  * Last, a muscle still short gets a set more on exercises already planned for it, up to
  * MAX_EXTRA_SETS a workout and one an exercise. A muscle trained one day a week can't reach its range
  * with new exercises alone.
  *
+ * Both new exercises and sets more go in this order:
+ *  1. Chest, back and legs muscles this day's type trains (see isBig). Today is their main chance.
+ *  2. A chest, back or legs muscle's light exercise on another day: its only other chance in the week.
+ *  3. Small muscles, which can join any day. Missing a day only means waiting for the next one.
+ * Within each, the furthest short first. Big muscles also take turns: one that got nothing from Focus
+ * over the last 7 days goes first in its tier, of those the one that got least the week before. Small
+ * muscles don't: being short already says how long they waited.
+ *
  * All of it shares Focus's share of the week, `week` (see focusWeek): a new exercise costs its planned
- * sets, a set more costs one, and with the share used up Focus adds nothing more. Muscles take turns: one
- * that got nothing from Focus over the last 7 days goes first, of those the one that got least the week
- * before, and then the furthest short. The first in line has what it needs kept for it: a new
- * exercise's sets while today can't serve it, or the whole share left when today can but that's too
- * little, so it comes first again next time. A muscle trained one day a week would otherwise find the
- * week's share gone by its day. Nothing may take the workout past `maxSets`, its usual length and a
+ * sets, a set more costs one, and with the share used up Focus adds nothing more. The first big muscle
+ * in line that's waiting has what it needs kept for it: a new exercise's sets while today can't serve
+ * it, or the whole share left when today can but that's too little, so it comes first again next time.
+ * A muscle trained one day a week would otherwise find the week's share gone by its day. It's kept from
+ * muscles in its own tier and the ones after, never from a tier before: the day's own big muscles take
+ * what they need first. Nothing is kept for a small muscle. Nothing may take the workout past `maxSets`, its usual length and a
  * little more; a pick that can't go on top for that can still take a filler's place, since the workout
  * then stays as long as it was. `held` says which limit kept something out.
  */
@@ -375,11 +418,12 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     setsOf(week, region) -
     PLANNED_SETS * worksFor(exerciseIds, region) -
     worksFor(extra.map((e) => e.exerciseId), region);
-  /** A muscle that got nothing from Focus over the last 7 days is waiting its turn. Without `week`, none is. */
-  const waiting = (region: BodyRegion) => plan.week !== undefined && (given.get(region) ?? 0) < 1;
-  const lately = (region: BodyRegion) => (plan.week ? (given.get(region) ?? 0) + (plan.week.earlier.get(region) ?? 0) : 0);
-  /** Turns: a muscle that's waiting first, the one that got least over two weeks first, then the furthest short. */
-  const byTurn = (a: BodyRegion, b: BodyRegion) => Number(waiting(b)) - Number(waiting(a)) || lately(a) - lately(b) || shortBy(b) - shortBy(a);
+  /**
+   * A big muscle that got nothing from Focus over the last 7 days is waiting its turn. Without `week`,
+   * none is. A small muscle never waits: it can join any day, so it just goes by how short it is.
+   */
+  const waiting = (region: BodyRegion) => plan.week !== undefined && isBig(region) && (given.get(region) ?? 0) < 1;
+  const lately = (region: BodyRegion) => (plan.week && isBig(region) ? (given.get(region) ?? 0) + (plan.week.earlier.get(region) ?? 0) : 0);
   const joins = (muscle: Muscle) => plan.groups.includes(groupOf(muscle)) || plan.partners.includes(muscle) || ANY_DAY.includes(muscle);
   const canPick = (id: string, region: BodyRegion) =>
     mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && !plan.avoid?.has(id) && joins(muscleOf(id));
@@ -418,11 +462,12 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
   /**
    * The muscle first in line. While it waits, what it needs is kept for it: a new exercise's sets when
    * it can't be served today, or all of it when it can but the room is too small, so it comes first next time.
+   * It's kept from muscles in its own tier and the ones after, never from a tier before it.
    */
   let first: BodyRegion | undefined;
   let firstBlocks = false;
   const roomFor = (region: BodyRegion) => {
-    if (first === undefined || region === first || !waiting(first)) return room;
+    if (first === undefined || region === first || !waiting(first) || tierOf(region) < tierOf(first)) return room;
     return firstBlocks ? 0 : room - PLANNED_SETS;
   };
   /** Too little room for `sets`: notes why. */
@@ -499,20 +544,24 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     !nextJoins(muscleOf(id));
   const otherDayFor = (region: BodyRegion) => today !== undefined && rested(region) && !exerciseIds.some((id) => mainOf(id).includes(region));
 
-  // Turns; of muscles level on those, one that can join this day before light work for another's day.
-  const order = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0)
-    .map((region) => ({ region, own: candidates.some((id) => canPick(id, region)) }))
-    .sort(
-      (a, b) =>
-        Number(waiting(b.region)) - Number(waiting(a.region)) || lately(a.region) - lately(b.region) || Number(!a.own) - Number(!b.own) || shortBy(b.region) - shortBy(a.region),
-    );
-  if (plan.week && order.length && waiting(order[0].region)) first = order[0].region;
+  // 1: a big muscle of this day's type or its partners. 2: another big muscle, mostly for light work
+  // here. 3: a small muscle. Read before any pick, so it holds for the sets more too.
+  const short = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0);
+  const tierOf = (region: BodyRegion) => (!isBig(region) ? 3 : joins(MUSCLE_OF[region]) ? 1 : 2);
+  // A deadlift can join a back day for glutes or hamstrings as it is; anything else for them only as light work.
+  const own = new Set(short.filter((region) => candidates.some((id) => canPick(id, region))));
+  /** Tiers, then turns among big muscles: one that's waiting, then the one that got least over two weeks. Then the furthest short. */
+  const byPriority = (a: BodyRegion, b: BodyRegion) =>
+    tierOf(a) - tierOf(b) || Number(waiting(b)) - Number(waiting(a)) || lately(a) - lately(b) || shortBy(b) - shortBy(a);
+  const order = short.sort(byPriority);
+  // Only a big muscle can be waiting, so room is never kept for a small one.
+  first = order.find(waiting);
   let otherDayDone = false;
-  for (const { region, own } of order) {
+  for (const region of order) {
     if (picks.length >= MAX_FOCUS) break;
     // A pick for an earlier muscle may have covered this one.
     if (shortBy(region) <= 0) continue;
-    if (own) {
+    if (own.has(region)) {
       for (const id of candidates) if (canPick(id, region) && tryPick(id, region, sameWork(id, region))) break;
     } else if (!otherDayDone && otherDayFor(region)) {
       otherDayDone = candidates.some((id) => canPickOtherDay(id, region) && tryPick(id, region, undefined, true));
@@ -528,17 +577,27 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
       .filter((id) => mainOf(id).includes(region) && done.includes(id) && !brought.has(id) && !extra.some((e) => e.exerciseId === id))
       .sort((a, b) => pointsOf(a) - pointsOf(b))
       .at(0);
+  // A set more for small muscles alone is free (see extraCounts): it goes on once the share is used.
+  const free = (id: string) => !extraCounts(exercises.get(id)!, goals);
+  let shareUsed = false;
   while (extra.length < MAX_EXTRA_SETS) {
     const next = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0)
-      .sort(byTurn)
+      .sort(byPriority)
       .map((region) => ({ region, exerciseId: lightestFor(region) }))
-      .find((candidate) => candidate.exerciseId !== undefined);
+      .find((candidate) => candidate.exerciseId !== undefined && (!shareUsed || free(candidate.exerciseId)));
     if (!next) break;
     if (!fitsTime(1)) {
       held ??= 'time';
       break;
     }
-    if (noRoom(next.region, 1)) break;
+    if (free(next.exerciseId!)) {
+      extra.push({ exerciseId: next.exerciseId!, region: next.region });
+      continue;
+    }
+    if (noRoom(next.region, 1)) {
+      shareUsed = true;
+      continue;
+    }
     giveTo(next.region, 1);
     extra.push({ exerciseId: next.exerciseId!, region: next.region });
   }

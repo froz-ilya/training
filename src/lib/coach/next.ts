@@ -536,8 +536,21 @@ function planType(
     .filter((id) => exercises.has(id) && open(id) && !kept.includes(id) && (!known.includes(id) || lastUsed.get(id) !== latest.date))
     .sort((a, b) => (lastUsed.get(a) ?? '').localeCompare(lastUsed.get(b) ?? ''));
 
+  // How often the variant has done an exercise lately: what's done least is the least settled part of
+  // it, as a Focus pick or something added by hand once. A stand-in counts as what it stands in for.
+  const timesDone = (id: string) => {
+    const was = standIns.find((s) => s.exerciseId === id)?.instead ?? id;
+    return scope.filter((w) => w.exerciseIds.includes(was)).length;
+  };
+  /** Of `ids`, the positions to cut first: done least often, the later one on a tie. */
+  const cutOrder = (ids: string[]) => ids.map((id, at) => ({ at, times: timesDone(id) })).sort((a, b) => a.times - b.times || b.at - a.at).map(({ at }) => at);
+  // A last workout longer than usual loses what the variant has done least, not what came last, so an
+  // exercise new to it in the middle, like a Focus pick after the main lifts, doesn't push a usual one
+  // off the end. The main lifts are never cut. What's cut stays at hand in case a slot comes up short.
+  const slots = known.slice(kept.length);
+  const cut = new Set(cutOrder(slots).slice(0, Math.max(0, slots.length - (size - kept.length))));
   const chosen = [...kept];
-  for (const id of known.slice(kept.length)) {
+  for (const id of [...slots.filter((_, at) => !cut.has(at)), ...slots.filter((_, at) => cut.has(at))]) {
     if (chosen.length >= size) break;
     const muscle = exercises.get(id)?.muscle;
     const swap = pool.find((p) => !chosen.includes(p) && exercises.get(p)?.muscle === muscle);
@@ -568,7 +581,8 @@ function planType(
     const id = usedInVariant.find((candidate) => muscleOf(candidate) === muscle);
     if (id === undefined || chosen.some((c) => muscleOf(c) === muscle)) continue;
     const fillers = chosen.flatMap((c, at) => (kept.includes(c) || dayPartners.includes(muscleOf(c)!) ? [] : [at]));
-    if (chosen.length >= size && fillers.length) chosen[fillers[fillers.length - 1]] = id;
+    // The filler it replaces is cut the same way: what the variant has done least.
+    if (chosen.length >= size && fillers.length) chosen[fillers[cutOrder(fillers.map((at) => chosen[at]))[0]]] = id;
     else if (chosen.length < MAX_EXERCISES) chosen.push(id);
   }
 

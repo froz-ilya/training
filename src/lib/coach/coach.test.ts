@@ -498,7 +498,7 @@ describe('suggestSets', () => {
 describe('next workout', () => {
   const ex = (id: string, muscle: Exercise['muscle']): Exercise => ({ ...press, id, muscle });
   const exercises = new Map(
-    [ex('a1', 'chest'), ex('a2', 'chest'), ex('a3', 'chest'), ex('a4', 'triceps'), ex('a5', 'triceps'), ex('a6', 'abs'), ex('a7', 'abs'), ex('b1', 'back'), ex('b2', 'back'), ex('c1', 'legs')].map(
+    [ex('a1', 'chest'), ex('a2', 'chest'), ex('a3', 'chest'), ex('a8', 'chest'), ex('a9', 'chest'), ex('a4', 'triceps'), ex('a5', 'triceps'), ex('a6', 'abs'), ex('a7', 'abs'), ex('b1', 'back'), ex('b2', 'back'), ex('c1', 'legs')].map(
       (e) => [e.id, e],
     ),
   );
@@ -545,6 +545,41 @@ describe('next workout', () => {
     expect(plan.key).toBe('chest');
     expect(plan.exerciseIds.slice(0, 3)).toEqual(['a1', 'a2', 'a3']);
     expect(plan.exerciseIds.slice(3)).toEqual(['a5', 'a7']);
+  });
+
+  describe('after a workout longer than usual', () => {
+    /** Chest days with a back day between, so the rotation lands on chest next. */
+    const chestDays = (...days: string[][]) => days.flatMap((ids, i) => [workout(`2026-01-${String(2 * i + 1).padStart(2, '0')}`, ids), workout(`2026-01-${String(2 * i + 2).padStart(2, '0')}`, ['b1', 'b2'])]);
+    const usual = ['a1', 'a2', 'a3', 'a4', 'a6'];
+
+    it('cuts what the variant has done least, not the filler at the end', () => {
+      const plan = planNextType(chestDays(usual, usual, usual, ['a1', 'a2', 'a3', 'a5', 'a4', 'a6']), exercises)!;
+      expect(plan.exerciseIds).toEqual(usual);
+    });
+
+    it('still cuts a one-off at the end, as it always did', () => {
+      const plan = planNextType(chestDays(usual, usual, usual, [...usual, 'a5']), exercises)!;
+      expect(plan.exerciseIds).toEqual(usual);
+    });
+
+    it('cuts the later of two done as often', () => {
+      const days = (last: string[]) => chestDays(['a1', 'a2', 'a3', 'a4', 'a6'], ['a1', 'a2', 'a3', 'a5', 'a6'], ['a1', 'a2', 'a3', 'a6'], last);
+      expect(planNextType(days(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']), exercises)!.exerciseIds).toEqual(['a1', 'a2', 'a3', 'a4', 'a6']);
+      expect(planNextType(days(['a1', 'a2', 'a3', 'a5', 'a4', 'a6']), exercises)!.exerciseIds).toEqual(['a1', 'a2', 'a3', 'a5', 'a6']);
+    });
+
+    it('puts back a partner muscle skipped last time in place of what the variant has done least', () => {
+      const habit = ['a1', 'a2', 'a3', 'a8', 'a4'];
+      const plan = planNextType(chestDays(habit, habit, habit, ['a1', 'a2', 'a3', 'a9', 'a8']), exercises)!;
+      // It takes the newcomer's slot, and the habitual filler stays.
+      expect(plan.exerciseIds).toEqual(['a1', 'a2', 'a3', 'a4', 'a8']);
+    });
+
+    it('never cuts a main lift, even one done once', () => {
+      const plan = planNextType(chestDays(usual, usual, usual, ['a1', 'a5', 'a2', 'a3', 'a4', 'a6']), exercises)!;
+      expect(plan.exerciseIds.slice(0, 3)).toEqual(['a1', 'a5', 'a2']);
+      expect(plan.exerciseIds).toHaveLength(5);
+    });
   });
 
   it('works for someone with a single workout', () => {

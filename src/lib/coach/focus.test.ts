@@ -374,6 +374,22 @@ describe('what a Focus pick costs and where it goes', () => {
     expect(focus.map((pick) => pick.exerciseId)).toEqual(['hip-abductor']);
     expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hip-abductor', ...LEGS.slice(3)]);
   });
+
+  describe('done once after the main lifts', () => {
+    // The last leg day had the pick straight after the main lifts, one exercise over the usual five.
+    const withPick = [...LEGS.slice(0, 3), 'hip-abductor', ...LEGS.slice(3)];
+    const history = [on(70, ['bulgarian-split-squat']), ...alternating(LEGS, CHEST).slice(0, 4), on(12, withPick), on(10, CHEST)];
+
+    it('is what the plan cuts, not the last filler, and Focus brings it back in its place', () => {
+      const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
+      expect(exerciseIds).toEqual(withPick);
+      expect(focus).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
+    });
+
+    it('goes once the goal is off, and the usual workout comes back', () => {
+      expect(plan(history).exerciseIds).toEqual(LEGS);
+    });
+  });
 });
 
 describe('a set more for a Focus muscle', () => {

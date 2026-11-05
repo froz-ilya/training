@@ -117,7 +117,11 @@ migration that is tested.
   back or legs work on another type's day, and an exercise new to its type, one that type's workouts
   in the 8 weeks before didn't have. That counts for its first 7 days. The plan keeps a type's usual
   number of exercises, so a pick it doesn't keep yet comes back on top: a workout past that number
-  also counts what's over it, while that exercise is in under half of the type's workouts. Plain work
+  also counts what's over it, while that exercise is in under half of the type's workouts. To get back
+  to that number the rotation (src/lib/coach/next.ts) cuts what the variant has done least in its
+  recent workouts, the later one on a tie, and never a main lift, so a pick after the main lifts goes
+  rather than the usual last filler. A partner muscle skipped last time comes back in the place of the
+  filler done least, by the same rule. Plain work
   never counts, so a type trained twice in 7 days uses none of the share, and today's plan doesn't
   count either. A new exercise counts at its usual sets. New exercises and extra sets go in tiers:
   first chest, back and legs muscles the day's type trains, then a light exercise for one of them on

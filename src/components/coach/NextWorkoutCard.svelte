@@ -65,8 +65,10 @@
     again: 'coach.next.variant.again',
   } as const;
 
-  function focusReason({ exercise, region, fresh, replaced, overlap }: NextWorkout['focus'][number]): string {
+  function focusReason({ exercise, region, fresh, replaced, overlap, otherDay }: NextWorkout['focus'][number]): string {
     const names = { region: t(`exercises.region.${region}`), name: nameOf(exercise) };
+    if (otherDay && replaced) return t(fresh ? 'coach.next.focus.otherDaySwappedNew' : 'coach.next.focus.otherDaySwapped', { ...names, old: nameOf(replaced) });
+    if (otherDay) return t(fresh ? 'coach.next.focus.otherDayNew' : 'coach.next.focus.otherDay', names);
     if (replaced && overlap) return t(fresh ? 'coach.next.focus.sameMuscleNew' : 'coach.next.focus.sameMuscle', { ...names, old: nameOf(replaced), other: t(`exercises.region.${overlap}`) });
     if (replaced) return t(fresh ? 'coach.next.focus.swappedNew' : 'coach.next.focus.swapped', { ...names, old: nameOf(replaced) });
     return t(fresh ? 'coach.next.focus.addedNew' : 'coach.next.focus.added', names);

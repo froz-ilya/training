@@ -169,9 +169,20 @@ describe('Focus simulation', () => {
     expect(run.regions.quads.status, `${table(run)}\n${plans(run)}`).toBe('normal');
   });
 
-  // Later targets, not reached yet: flip `it.fails` to `it` once they are. Measured with extraSets:
-  // quads 8/wk (12-30) and hamstrings 4/wk (9-24); with five muscles, sideDelts 8 and biceps 8 (9-30)
-  // and hamstrings 4, while chest and quads reach 12.
+  it('keeps the rotation’s order', () => {
+    for (const [name, run] of Object.entries(runs)) expect(run.days.map((day) => day.key), `${name}\n${plans(run)}`).toEqual(baseline.days.map((day) => day.key));
+  });
+
+  // Phase 2: a light exercise on another day. Before it, with quads and hamstrings both on Focus,
+  // quads came to 8/wk; with a leg extension or curl on chest days, quads reach 12.
+  it('brings quads into range alongside hamstrings', () => {
+    const run = runs['quads+hamstrings'];
+    expect(run.regions.quads.status, `${table(run)}\n${plans(run)}`).toBe('normal');
+  });
+
+  // Later targets, not reached yet: flip `it.fails` to `it` once they are. Measured with extraSets
+  // and light work on another day: hamstrings 4/wk (9-24) alongside quads; with five muscles,
+  // sideDelts 8 and biceps 8 (9-30), quads 11 (12-30) and hamstrings 4, while chest reaches 12.
   it.fails('brings quads and hamstrings both into range', () => {
     const run = runs['quads+hamstrings'];
     for (const region of ['quads', 'hamstrings'] as const) expect(run.regions[region].status, `${region}\n${table(run)}`).toBe('normal');

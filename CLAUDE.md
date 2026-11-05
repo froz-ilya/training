@@ -94,7 +94,12 @@ migration that is tested.
   for the week, at most two a workout, and only if the workout stays within a point of its usual
   difficulty. A pick swaps a filler that trains its other main muscle; otherwise the first goes on top
   if that fits, and any other swaps a filler, or goes on top too when there's none. Medium and hard
-  picks go straight after the main lifts, light ones last. A muscle still short then gets a set more on
+  picks go straight after the main lifts, light ones last. Chest, back and legs only join their own
+  day, so a Focus muscle among them that's still short may also get one light exercise mainly for it on
+  another type's day: one a workout, after the own-day picks, placed the same way. It waits two days
+  after the muscle's last main work, and the day before its own day, going by the type the rotation
+  expects next. Light work for chest, back or legs on another type's day never makes that day's type,
+  a partner muscle or a group in its title, so it doesn't move the rotation. A muscle still short then gets a set more on
   exercises already planned for it, lightest first, one an exercise and four a workout, unless that
   exercise's plan is easing off (pain, a break, a lighter week). Those sets are stored with
   `extra: true`: the usual set count leaves them out, so turning Focus off goes straight back to it,
@@ -102,7 +107,9 @@ migration that is tested.
   Maintain drops fillers once its range is met. Main lifts and weights don't change.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
-  stored, so they follow the interface language.
+  stored, so they follow the interface language. They read a day as the rotation does (`dayWork()` in
+  src/lib/catalog/groups.ts): light work for chest, back or legs is left out, sets and all, when another
+  of them had medium or hard work. A day of only light work for them is read in full.
 - Sets: a new set starts with last time's `failure` mark, so someone who always trains to failure only
   taps the exception, and only done sets count. `level` is copied too, and reps are never compared
   across levels, because whether higher is easier depends on the exercise.

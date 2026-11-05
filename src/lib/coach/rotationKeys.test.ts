@@ -116,6 +116,19 @@ describe('what a workout counts as', () => {
     expect(keysOf({ row: 5, pulldown: 5, legCurl: 4 })).toEqual(['back']);
   });
 
+  it('does not make a type from light work next to heavier work', () => {
+    // A leg curl on a chest day, as Focus brings in for legs on another day.
+    const curl = { ...ex('lightCurl', 'legs'), compound: false };
+    const raise = { ...ex('lightRaise', 'calves'), compound: false };
+    const known = new Map([...exercises, [curl.id, curl], [raise.id, raise]]);
+    expect(rotationKeys([day({ bench: 3, incline: 3, lightCurl: 3 })], known)).toEqual(['chest']);
+    expect(rotationKeys([day({ bench: 3, lightCurl: 3, lightRaise: 3 })], known)).toEqual(['chest']);
+    // With nothing heavier for chest, back or legs, light work makes the day as before.
+    expect(rotationKeys([day({ lightCurl: 3, lightRaise: 3, overhead: 3 })], known)).toEqual(['legs']);
+    // And a group with heavier work counts its light work too.
+    expect(rotationKeys([day({ squat: 3, lightCurl: 3, bench: 3, incline: 3 })], known)).toEqual(['legs', 'chest']);
+  });
+
   it('keeps one empty key for a workout with no known exercises', () => {
     expect(keysOf({ gone: 4 })).toEqual(['']);
   });
@@ -327,6 +340,17 @@ describe('muscles a type’s days usually train', () => {
     const treadmill = ex('treadmill', 'cardio');
     const known = new Map([...exercises, [treadmill.id, treadmill]]);
     expect(planNextType(series(repeat(3, [{ treadmill: 1, ...CHEST }])), known)?.partners.chest).toEqual([]);
+  });
+
+  it('do not include light work for chest, back or legs', () => {
+    const curl = { ...ex('lightCurl', 'legs'), compound: false };
+    const raise = { ...ex('lightRaise', 'shoulders'), compound: false };
+    const known = new Map([...exercises, [curl.id, curl], [raise.id, raise]]);
+    expect(planNextType(series(repeat(3, [{ ...CHEST, lightCurl: 3 }])), known)?.partners.chest).toEqual([]);
+    expect(planNextType(series(repeat(3, [{ ...CHEST, lightRaise: 3 }])), known)?.partners.chest).toEqual(['shoulders']);
+    const calfRaise = { ...ex('calfRaise', 'calves'), compound: false };
+    known.set(calfRaise.id, calfRaise);
+    expect(planNextType(series(repeat(3, [{ ...CHEST, calfRaise: 3 }])), known)?.partners.chest).toEqual(['calves']);
   });
 
   it.each([2, 3])('stay in the plan with a workout every %i days', (gap) => {

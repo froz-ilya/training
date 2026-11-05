@@ -507,7 +507,7 @@ export interface NextWorkout {
   leftOut: Exercise[];
   added: Muscle[];
   /** Exercises brought in for a Focus muscle, and what each replaced, if anything. */
-  focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion }[];
+  focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion; otherDay?: true }[];
   /** Exercises with a set more for a Focus muscle, in plan order. */
   extraSets: { exercise: Exercise; region: BodyRegion }[];
   /** Exercises planned in place of ones the user doesn't want suggested. */
@@ -563,14 +563,21 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
     list.push({ exercise, sets, suggestion: view.suggestion });
     planned.push(...sets.map((set) => ({ ...set, exerciseId: id, entry: position })));
   }
-  const groups = mainGroups(list.map((e) => ({ muscle: e.exercise.muscle, sets: e.sets.filter((s) => s.kind === 'work').length })));
+  const groups = mainGroups(list.map((e) => ({ exercise: e.exercise, sets: e.sets.filter((s) => s.kind === 'work').length })));
   const dates = [...workouts.values()].map((w) => w.date);
   const reason = plan.reason && { kind: plan.reason.kind, after: exercises.get(plan.reason.after)!, lead: exercises.get(plan.reason.lead)! };
   const otherVariants = plan.otherLeads.map((id) => exercises.get(id)!);
   const typeName = (key: string): TypeName => ({ key, groups: typeGroups(key), partners: plan.partners[key] ?? [] });
   const typeReason = plan.typeReason && { kind: plan.typeReason.kind, types: plan.typeReason.types.map(typeName) };
   const partners = typeName(plan.key).partners.filter((muscle) => list.some((e) => e.exercise.muscle === muscle));
-  const focus = plan.focus.map(({ exerciseId, region, fresh, replaced, overlap }) => ({ exercise: exercises.get(exerciseId)!, region, fresh, replaced: replaced ? exercises.get(replaced) : undefined, overlap }));
+  const focus = plan.focus.map(({ exerciseId, region, fresh, replaced, overlap, otherDay }) => ({
+    exercise: exercises.get(exerciseId)!,
+    region,
+    fresh,
+    replaced: replaced ? exercises.get(replaced) : undefined,
+    overlap,
+    otherDay,
+  }));
   const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
   const back = plan.sometimes;
   const sometimes = back && { exercise: exercises.get(back.exerciseId)!, last: back.last, replaced: back.replaced ? exercises.get(back.replaced) : undefined };

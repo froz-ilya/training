@@ -48,6 +48,13 @@ describe('workout titles', () => {
     expect(mainGroups(groupWork(sets, exercises))).toEqual(['chest', 'legs']);
   });
 
+  it('don’t name legs for a leg curl on a chest day, but do on a legs day', () => {
+    const day = (ids: string[]) => workoutTitle(mainGroups(groupWork(ids.flatMap((id, entry) => [set(id, entry), set(id, entry), set(id, entry)]), exercises)));
+    expect(day(['barbell-bench-press', 'incline-barbell-press', 'lateral-raise', 'rope-pushdown', 'lying-leg-curl'])).toBe('Chest, shoulders');
+    expect(day(['leg-press', 'barbell-squat', 'lying-leg-curl', 'lateral-raise'])).toBe('Legs, shoulders');
+    expect(day(['leg-extension', 'lying-leg-curl', 'standing-calf-raise'])).toBe('Legs');
+  });
+
   it('go by a custom exercise’s muscle, and skip an exercise that’s gone', () => {
     const custom = { ...CATALOG[0], id: 'custom-1', muscle: 'back' } as Exercise;
     const known = new Map([[custom.id, custom]]);

@@ -78,7 +78,7 @@
     workoutTitle(
       mainGroups(
         details.flatMap(({ entry, exercise }) =>
-          exercise ? [{ muscle: exercise.muscle, sets: entry.sets.filter((s) => s.kind === 'work').length }] : [],
+          exercise ? [{ exercise, sets: entry.sets.filter((s) => s.kind === 'work').length }] : [],
         ),
       ),
     ),

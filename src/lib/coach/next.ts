@@ -1,10 +1,10 @@
 import { difficultyPoints } from '../catalog/difficulty';
-import { groupOf, leadingGroup, type MuscleGroup } from '../catalog/groups';
+import { dayWork, groupOf, leadingGroup, lightDayWork, ROTATION_GROUPS, type MuscleGroup } from '../catalog/groups';
 import { daysBetween } from '../dates';
 import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
-import { fitWeek, muscleBudgets, workedExercises } from './budget';
+import { fitWeek, muscleBudgets, SMALL, workedExercises } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
-import { applyFocus, heldEnough, trainsShortFocus, weekSets } from './focus';
+import { applyFocus, heldEnough, lastMainWork, trainsShortFocus, weekSets } from './focus';
 import { expectedGapDays } from './frequency';
 import { median } from './position';
 import { sometimesState, type SometimesPick } from './sometimes';
@@ -42,6 +42,8 @@ export interface FocusPick {
   replaced?: string;
   /** The muscle both train: why it took that place, rather than to make room. */
   overlap?: BodyRegion;
+  /** Light work on a day that isn't the muscle's own, so it's trained twice a week. */
+  otherDay?: true;
 }
 
 /** One more work set than usual on an exercise already in the plan, for a Focus muscle that's still short. */
@@ -92,8 +94,6 @@ const ANCHORS = 3;
 const SAME_SHARE = 2 / 3;
 const MAX_OTHER_VARIANTS = 4;
 
-/** The groups a rotation type can be. Shoulders, arms and core round a day off rather than define it. */
-const ROTATION_GROUPS: readonly MuscleGroup[] = ['chest', 'back', 'legs'];
 /** The share of a day's chest, back and legs work that makes it count as that group's workout. */
 const TYPE_SHARE = 1 / 3;
 /** Between the groups of a type that a habit has joined. */
@@ -121,10 +121,12 @@ function exerciseGroup(id: string, exercises: Map<string, Exercise>): MuscleGrou
  * also trains legs. With none of chest, back and legs: the group it trained most.
  */
 function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise>): MuscleGroup[] {
-  const done = workout.exerciseIds.flatMap((id) => {
+  const known = workout.exerciseIds.flatMap((id) => {
     const exercise = exercises.get(id);
     return exercise ? [{ exercise, sets: Math.max(1, workout.workSets[id] ?? 0) }] : [];
   });
+  // A leg curl on a chest day isn't a leg day: the same reading as the workout's title.
+  const done = dayWork(known);
   const totals = new Map<MuscleGroup, number>();
   const add = (muscle: Muscle, sets: number) => {
     const group = groupOf(muscle);
@@ -139,7 +141,7 @@ function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise
   if (done.some(({ exercise }) => ROTATION_GROUPS.includes(groupOf(exercise.muscle)))) {
     return [...totals].filter(([, sets]) => sets / all >= TYPE_SHARE).map(([group]) => group);
   }
-  const leading = leadingGroup(done.map(({ exercise, sets }) => ({ muscle: exercise.muscle, sets })));
+  const leading = leadingGroup(done);
   return leading ? [leading] : [];
 }
 
@@ -323,13 +325,16 @@ function workoutsOfType(workouts: RotationWorkout[], types: string[][], key: str
 /**
  * The muscles outside a type's own groups that most of its recent days trained, most often first:
  * shoulders with legs, say. They're part of that day, not fillers. Cardio is too often a warm-up
- * to say what a day is.
+ * to say what a day is. Light work for chest, back or legs doesn't make a partner either, just as it
+ * doesn't make a type: that's what Focus brings in on another day. Calves can join any day, so they can.
  */
 function partnerMuscles(days: RotationWorkout[], key: string, exercises: Map<string, Exercise>): Muscle[] {
   const recent = days.slice(-TYPE_LOOKBACK);
   const counts = new Map<Muscle, number>();
+  const counted = (exercise: Exercise) => !lightDayWork(exercise) || SMALL.includes(exercise.muscle);
   for (const day of recent) {
-    for (const muscle of new Set(workedExercises(day, exercises).map((id) => exercises.get(id)!.muscle))) {
+    const worked = workedExercises(day, exercises).map((id) => exercises.get(id)!);
+    for (const muscle of new Set(worked.filter(counted).map((exercise) => exercise.muscle))) {
       if (muscle !== 'cardio' && !typeGroups(key).includes(groupOf(muscle))) counts.set(muscle, (counts.get(muscle) ?? 0) + 1);
     }
   }
@@ -556,6 +561,8 @@ function planType(
     exercises,
   );
   const recent = doneExercises(usable, exercises);
+  // What the rotation would suggest once this workout is done, so a muscle isn't worked the day before its own.
+  const afterKey = pace ? overdueKey([...keys, key], [...dates, pace.today], pace) : nextKey([...keys, key]);
   const focus = applyFocus(
     {
       exerciseIds: fit.exerciseIds,
@@ -571,6 +578,10 @@ function planType(
       due,
       lastDone,
       full: (id) => heldEnough(exercises.get(id)!, active, week) || fit.reached(exercises.get(id)!.muscle),
+      today: pace?.today,
+      lastMain: pace ? lastMainWork(workouts, exercises) : undefined,
+      nextGroups: afterKey === null ? undefined : typeGroups(afterKey),
+      nextPartners: afterKey === null ? undefined : partners[afterKey],
     },
     active,
     week,

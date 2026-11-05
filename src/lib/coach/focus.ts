@@ -32,6 +32,8 @@ const ROOM = 1;
 const MAX_EXTRA_SETS = 4;
 /** Muscles that round off any day. Chest, back and legs wait for their own. */
 const ANY_DAY: readonly Muscle[] = ['shoulders', ...SMALL];
+/** Days a muscle rests after its main work before light work on another day. */
+const REST_DAYS = 2;
 
 const setsOf = (week: RegionSets, region: BodyRegion) => week.get(region) ?? 0;
 
@@ -51,6 +53,19 @@ export function weekSets(workouts: RotationWorkout[], exercises: Map<string, Exe
     }
   }
   return week;
+}
+
+/** The date each region last had work sets on an exercise mainly for it. */
+export function lastMainWork(workouts: RotationWorkout[], exercises: Map<string, Exercise>): Map<BodyRegion, string> {
+  const last = new Map<BodyRegion, string>();
+  for (const { date, workSets } of workouts) {
+    for (const [id, sets] of Object.entries(workSets)) {
+      const exercise = exercises.get(id);
+      if (!exercise || !(sets > 0)) continue;
+      for (const region of regionsOf(exercise).main) if ((last.get(region) ?? '') < date) last.set(region, date);
+    }
+  }
+  return last;
 }
 
 /** Everything it's mainly for is on Maintain, and each of those has had enough this week. */
@@ -91,6 +106,14 @@ export interface FocusPlan {
   lastDone?: ReadonlyMap<string, string>;
   /** The exercise's muscle has had enough this week. */
   full?: (id: string) => boolean;
+  /** Today's date. Without it, nothing comes in for a muscle on another day than its own. */
+  today?: string;
+  /** When each region last had main work: see lastMainWork. */
+  lastMain?: ReadonlyMap<BodyRegion, string>;
+  /** The groups of the type the rotation expects after this one. Unknown, only the rest days count. */
+  nextGroups?: MuscleGroup[];
+  /** The partner muscles of that type. */
+  nextPartners?: Muscle[];
 }
 
 export interface FocusFit {
@@ -117,6 +140,11 @@ export interface FocusFit {
  * filler's place, or goes on top too when there's no filler to give up. So a focus never costs a main
  * lift or makes a workout much longer. Medium and hard picks go straight after the main lifts, and
  * light ones last. A muscle that can't join this day waits for its own.
+ *
+ * A Focus muscle that can't join this day and is still short may get one light exercise mainly for it
+ * here, so a muscle trained one day a week gets a second. One a workout, after the picks for muscles
+ * that can join, and placed the same way. Not within REST_DAYS of its last main work, and not the day
+ * before its own day, so it comes rested to the work that counts most.
  *
  * Last, a muscle still short gets a set more on exercises already planned for it, up to
  * MAX_EXTRA_SETS a workout and one an exercise. A muscle trained one day a week can't reach its range
@@ -181,6 +209,29 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
   };
 
   let onTop = false;
+  /**
+   * Brings `id` in for `region` if it fits: in the place of `overlap`, the filler for its other main
+   * muscle, or else on top, or in the place of a filler.
+   */
+  const tryPick = (id: string, region: BodyRegion, overlap: string | undefined, otherDay = false): boolean => {
+    const fitsOnTop = overlap === undefined && exerciseIds.length < plan.max && withinLimit(id);
+    const replaced = fitsOnTop && !onTop ? undefined : (overlap ?? fillerToSwap());
+    // With no filler to give up its place, a second one can go on top too, if that fits.
+    const goesOnTop = replaced === undefined && fitsOnTop;
+    if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced))) return false;
+    const pick: FocusPick = { exerciseId: id, region, fresh: !done.includes(id) };
+    if (goesOnTop) onTop = true;
+    else {
+      exerciseIds.splice(exerciseIds.indexOf(replaced!), 1);
+      pick.replaced = replaced;
+    }
+    if (overlap !== undefined) pick.overlap = mainOf(overlap).find((other) => other !== region && mainOf(id).includes(other));
+    if (otherDay) pick.otherDay = true;
+    place(id);
+    picks.push(pick);
+    return true;
+  };
+
   for (const id of plan.due ?? []) {
     const last = plan.lastDone?.get(id);
     if (exerciseIds.includes(id)) {
@@ -207,23 +258,31 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     // A pick for an earlier muscle may have covered this one.
     if (shortBy(region) <= 0) continue;
     for (const id of candidates) {
-      if (!canPick(id, region)) continue;
-      const overlap = sameWork(id, region);
-      const fitsOnTop = overlap === undefined && exerciseIds.length < plan.max && withinLimit(id);
-      const replaced = fitsOnTop && !onTop ? undefined : (overlap ?? fillerToSwap());
-      // With no filler to give up its place, a second one can go on top too, if that fits.
-      const goesOnTop = replaced === undefined && fitsOnTop;
-      if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced))) continue;
-      const pick: FocusPick = { exerciseId: id, region, fresh: !done.includes(id) };
-      if (goesOnTop) onTop = true;
-      else {
-        exerciseIds.splice(exerciseIds.indexOf(replaced!), 1);
-        pick.replaced = replaced;
-      }
-      if (overlap !== undefined) pick.overlap = mainOf(overlap).find((other) => other !== region && mainOf(id).includes(other));
-      place(id);
-      picks.push(pick);
-      break;
+      if (canPick(id, region) && tryPick(id, region, sameWork(id, region))) break;
+    }
+  }
+
+  // Light work for a muscle on another day than its own: rested from its main work and not due tomorrow.
+  const today = plan.today;
+  const nextJoins = (muscle: Muscle) => !!plan.nextGroups && (plan.nextGroups.includes(groupOf(muscle)) || !!plan.nextPartners?.includes(muscle));
+  const rested = (region: BodyRegion) => {
+    const last = plan.lastMain?.get(region);
+    return last === undefined || daysBetween(last, today!) >= REST_DAYS;
+  };
+  const canPickOtherDay = (id: string, region: BodyRegion) =>
+    mainOf(id).includes(region) &&
+    !isHeavy(id) &&
+    !exerciseIds.includes(id) &&
+    !plan.leftOut.includes(id) &&
+    !plan.avoid?.has(id) &&
+    !joins(muscleOf(id)) &&
+    !nextJoins(muscleOf(id));
+  if (today !== undefined && picks.length < MAX_FOCUS) {
+    const otherDay = BODY_REGIONS.filter(
+      (region) => goals[region] === 'focus' && shortBy(region) > 0 && rested(region) && !exerciseIds.some((id) => mainOf(id).includes(region)),
+    ).sort((a, b) => shortBy(b) - shortBy(a));
+    search: for (const region of otherDay) {
+      for (const id of candidates) if (canPickOtherDay(id, region) && tryPick(id, region, undefined, true)) break search;
     }
   }
 

@@ -11,9 +11,9 @@ import type { Exercise, Muscle, WorkoutSet } from '../types';
 export function groupWork(sets: Pick<WorkoutSet, 'exerciseId' | 'entry' | 'kind'>[], exercises: Map<string, Exercise>): GroupWork[] {
   const work = new Map<number, GroupWork>();
   for (const set of sets) {
-    const muscle = exercises.get(set.exerciseId)?.muscle;
-    if (!muscle) continue;
-    const entry = work.get(set.entry) ?? { muscle, sets: 0 };
+    const exercise = exercises.get(set.exerciseId);
+    if (!exercise) continue;
+    const entry = work.get(set.entry) ?? { exercise, sets: 0 };
     if (set.kind === 'work') entry.sets += 1;
     work.set(set.entry, entry);
   }

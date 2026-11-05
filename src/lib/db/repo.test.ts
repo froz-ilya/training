@@ -290,7 +290,7 @@ describe('lists', () => {
   });
 
   it('says what a workout trained, counting a custom exercise by its muscle', async () => {
-    await db.customExercises.put({ id: 'custom-a', names: { en: 'Mine', de: '', ru: '' }, muscle: 'legs', equipment: 'other', load: 'weight', compound: false, createdAt: 1 });
+    await db.customExercises.put({ id: 'custom-a', names: { en: 'Mine', de: '', ru: '' }, muscle: 'legs', equipment: 'other', load: 'weight', compound: true, createdAt: 1 });
     const id = await createWorkout();
     await addExercise(id, 'custom-a');
     await addExercise(id, 'barbell-bench-press');

@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import type { SetPlan } from '../../lib/coach/suggest';
+  import type { BodyRegion, Exercise } from '../../lib/types';
 
   export interface WorkoutDraft {
     exercises: { exerciseId: string; sets: SetPlan[] }[];
@@ -71,6 +72,13 @@
     return t(fresh ? 'coach.next.focus.addedNew' : 'coach.next.focus.added', names);
   }
 
+  /** One note per Focus muscle, in plan order. */
+  function extraByRegion(list: NextWorkout['extraSets']): [BodyRegion, Exercise[]][] {
+    const byRegion = new Map<BodyRegion, Exercise[]>();
+    for (const { exercise, region } of list) byRegion.set(region, [...(byRegion.get(region) ?? []), exercise]);
+    return [...byRegion];
+  }
+
   function sometimesReason({ exercise, last, replaced }: NonNullable<NextWorkout['sometimes']>): string {
     const name = nameOf(exercise);
     if (replaced) {
@@ -95,7 +103,7 @@
 {#if next}
   {@const plan = next}
   {@const reasons = [plan.week.behind, plan.typeReason, plan.reason].filter(Boolean).length}
-  {@const notes = plan.sometimes || plan.leftOut.length || plan.added.length || plan.focus.length || plan.standIns.length}
+  {@const notes = plan.sometimes || plan.leftOut.length || plan.added.length || plan.focus.length || plan.extraSets.length || plan.standIns.length}
   {@const switches = [plan.otherTypes, plan.otherVariants].filter((options) => options.length).length}
   <section class="card next">
     <div class="plan">
@@ -142,6 +150,9 @@
             {/if}
             {#each plan.focus as pick (pick.exercise.id)}
               {@render note('target', focusReason(pick))}
+            {/each}
+            {#each extraByRegion(plan.extraSets) as [region, list] (region)}
+              {@render note('target', t('coach.next.focus.extraSets', { region: t(`exercises.region.${region}`), names: list.map(nameOf).join(', ') }))}
             {/each}
             {#each plan.standIns as swap (swap.instead.id)}
               {@render note('swap', t(swap.fresh ? 'coach.next.standInNew' : 'coach.next.standIn', { name: nameOf(swap.exercise), old: nameOf(swap.instead) }))}

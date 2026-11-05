@@ -61,6 +61,8 @@
           <span aria-hidden="true">{arrow}</span>
           {changeText(change)}
         </span>
+      {:else if set.extra && !warmup}
+        <span class="extra">{t('workout.extraSet')}</span>
       {/if}
     </span>
     {#if load === 'time'}
@@ -162,6 +164,12 @@
   }
   .change.down.calm {
     color: var(--text-2);
+  }
+  .extra {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--accent-strong);
   }
   .value {
     min-width: 0;

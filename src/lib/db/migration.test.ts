@@ -312,6 +312,51 @@ describe('database versions', () => {
     db.close();
   });
 
+  it('reads a v1 set as not added by Focus, and it stays that way through a backup', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const [set] = await db.sets.toArray();
+    expect(set).toEqual(v1Set);
+    expect(set.extra).toBeUndefined();
+    const { exportBackup, restoreBackup } = await import('./backup');
+    const text = await (await exportBackup()).text();
+    await db.sets.clear();
+    await restoreBackup(text);
+    const [restored] = await db.sets.toArray();
+    expect(restored).toEqual(v1Set);
+    expect('extra' in restored).toBe(false);
+    db.close();
+  });
+
+  it('opens a v2 set with the extra mark as it was stored, with no upgrade, and keeps it through a backup', async () => {
+    const d = oldDb(2, V2);
+    await d.table('workouts').put(v1Workout);
+    await d.table('sets').put({ ...v1Set, extra: true });
+    d.close();
+    const db = await openCurrent();
+    expect(await db.sets.get('s1')).toEqual({ ...v1Set, extra: true });
+    const { exportBackup, restoreBackup } = await import('./backup');
+    const text = await (await exportBackup()).text();
+    await db.sets.clear();
+    await restoreBackup(text);
+    expect(await db.sets.get('s1')).toEqual({ ...v1Set, extra: true });
+    db.close();
+  });
+
+  it('restores a v1 backup with no extra marks, and drops a bad one in any backup', async () => {
+    await seedV1();
+    const db = await openCurrent();
+    const { restoreBackup } = await import('./backup');
+    const file = (version: number, sets: object[]) => JSON.stringify({ app: 'training', version, exportedAt: '', data: { workouts: [v1Workout], sets } });
+    expect(await restoreBackup(file(1, [v1Set]))).toEqual({ workouts: 1, dropped: 0 });
+    expect(await db.sets.toArray()).toEqual([v1Set]);
+    for (const bad of ['yes', 1, false, null]) {
+      expect(await restoreBackup(file(2, [{ ...v1Set, extra: bad }]))).toEqual({ workouts: 1, dropped: 0 });
+      expect(await db.sets.toArray()).toEqual([v1Set]);
+    }
+    db.close();
+  });
+
   it('lists every table in USER_TABLES, so backups miss nothing', async () => {
     const db = await openCurrent();
     const { USER_TABLES } = await import('./schema');

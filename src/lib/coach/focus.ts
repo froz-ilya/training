@@ -6,7 +6,7 @@ import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
 import { regionRange } from './balance';
 import { SMALL } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
-import type { FocusPick, RotationWorkout } from './next';
+import type { FocusExtra, FocusPick, RotationWorkout } from './next';
 import type { SometimesPick } from './sometimes';
 
 /**
@@ -28,6 +28,8 @@ const PLANNED_SETS = 3;
 const MAX_FOCUS = 2;
 /** A starting value: a Focus exercise may make a workout a little harder than usual, not a lot. */
 const ROOM = 1;
+/** A starting value: sets added to exercises already planned, a few minutes' work in all. */
+const MAX_EXTRA_SETS = 4;
 /** Muscles that round off any day. Chest, back and legs wait for their own. */
 const ANY_DAY: readonly Muscle[] = ['shoulders', ...SMALL];
 
@@ -94,6 +96,8 @@ export interface FocusPlan {
 export interface FocusFit {
   exerciseIds: string[];
   picks: FocusPick[];
+  /** Sets added to exercises already in the plan, at most one each. */
+  extra: FocusExtra[];
   /** One a workout, so the workout stays the user's own. */
   sometimes?: SometimesPick;
 }
@@ -110,13 +114,18 @@ export interface FocusFit {
  * the workout more than ROOM over its usual cost, or the next one is tried, and with none left the
  * muscle goes without today. An exercise that also trains what a filler trains takes that filler's place.
  * Otherwise the first goes on top if the workout has room and that fits, and any other takes a
- * filler's place, so a focus never costs a main lift or makes a workout much longer. Medium and hard
- * picks go straight after the main lifts, and light ones last. A muscle that can't join this day
- * waits for its own.
+ * filler's place, or goes on top too when there's no filler to give up. So a focus never costs a main
+ * lift or makes a workout much longer. Medium and hard picks go straight after the main lifts, and
+ * light ones last. A muscle that can't join this day waits for its own.
+ *
+ * Last, a muscle still short gets a set more on exercises already planned for it, up to
+ * MAX_EXTRA_SETS a workout and one an exercise. A muscle trained one day a week can't reach its range
+ * with new exercises alone.
  */
 export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets, exercises: Map<string, Exercise>): FocusFit {
   const exerciseIds = [...plan.exerciseIds];
   const picks: FocusPick[] = [];
+  const extra: FocusExtra[] = [];
   let sometimes: SometimesPick | undefined;
   const done = [...plan.recent, ...plan.older];
   const equipment = new Set(plan.recent.map((id) => exercises.get(id)!.equipment));
@@ -130,9 +139,13 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
   const muscleOf = (id: string) => exercises.get(id)!.muscle;
   const pointsOf = (id: string) => difficultyPoints(exercises.get(id)!);
   const isHeavy = (id: string) => difficultyOf(exercises.get(id)!) !== 'light';
-  const plannedFor = (region: BodyRegion) =>
-    exerciseIds.filter((id) => mainOf(id).includes(region)).length + HELPER_WEIGHT * exerciseIds.filter((id) => helpersOf(id).includes(region)).length;
-  const shortBy = (region: BodyRegion) => regionRange(region, 'focus').low - setsOf(week, region) - PLANNED_SETS * plannedFor(region);
+  const worksFor = (ids: string[], region: BodyRegion) =>
+    ids.filter((id) => mainOf(id).includes(region)).length + HELPER_WEIGHT * ids.filter((id) => helpersOf(id).includes(region)).length;
+  const shortBy = (region: BodyRegion) =>
+    regionRange(region, 'focus').low -
+    setsOf(week, region) -
+    PLANNED_SETS * worksFor(exerciseIds, region) -
+    worksFor(extra.map((e) => e.exerciseId), region);
   const joins = (muscle: Muscle) => plan.groups.includes(groupOf(muscle)) || plan.partners.includes(muscle) || ANY_DAY.includes(muscle);
   const canPick = (id: string, region: BodyRegion) =>
     mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && !plan.avoid?.has(id) && joins(muscleOf(id));
@@ -196,8 +209,10 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     for (const id of candidates) {
       if (!canPick(id, region)) continue;
       const overlap = sameWork(id, region);
-      const goesOnTop = overlap === undefined && !onTop && exerciseIds.length < plan.max && withinLimit(id);
-      const replaced = goesOnTop ? undefined : (overlap ?? fillerToSwap());
+      const fitsOnTop = overlap === undefined && exerciseIds.length < plan.max && withinLimit(id);
+      const replaced = fitsOnTop && !onTop ? undefined : (overlap ?? fillerToSwap());
+      // With no filler to give up its place, a second one can go on top too, if that fits.
+      const goesOnTop = replaced === undefined && fitsOnTop;
       if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced))) continue;
       const pick: FocusPick = { exerciseId: id, region, fresh: !done.includes(id) };
       if (goesOnTop) onTop = true;
@@ -211,5 +226,23 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
       break;
     }
   }
-  return { exerciseIds, picks, sometimes };
+
+  // What the new exercises leave short gets a set more on what's planned for it: the muscle furthest
+  // short first, one set at a time, and on its lightest exercise first, so the main lift keeps its sets.
+  // Only on what the user has done and didn't just come in: a set more copies a usual one.
+  const brought = new Set([...picks.map((pick) => pick.exerciseId), ...(sometimes ? [sometimes.exerciseId] : [])]);
+  const lightestFor = (region: BodyRegion) =>
+    exerciseIds
+      .filter((id) => mainOf(id).includes(region) && done.includes(id) && !brought.has(id) && !extra.some((e) => e.exerciseId === id))
+      .sort((a, b) => pointsOf(a) - pointsOf(b))
+      .at(0);
+  while (extra.length < MAX_EXTRA_SETS) {
+    const next = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0)
+      .sort((a, b) => shortBy(b) - shortBy(a))
+      .map((region) => ({ region, exerciseId: lightestFor(region) }))
+      .find((candidate) => candidate.exerciseId !== undefined);
+    if (!next) break;
+    extra.push({ exerciseId: next.exerciseId!, region: next.region });
+  }
+  return { exerciseIds, picks, extra, sometimes };
 }

@@ -23,6 +23,8 @@ export interface SetPlan {
   seconds?: number;
   level?: number;
   failure?: boolean;
+  /** Added by Focus on top of the usual sets. */
+  extra?: boolean;
 }
 
 export type ReasonCode =
@@ -175,9 +177,9 @@ const asksForMore = (reason: ReasonCode) => reason === 'up' || reason === 'moreR
 /** A plan stays at the height the set was done at, and adds nothing when it has none. */
 const atLevel = (level: number | undefined) => (level === undefined ? {} : { level });
 
-/** How many work sets this user usually does for this exercise. */
+/** How many work sets this user usually does for this exercise. Sets Focus added don't count. */
 export function usualWorkSets(history: Session[]): number {
-  const counts = history.slice(-USUAL_SETS_SESSIONS).map((s) => doneWork(s).length).filter(Boolean);
+  const counts = history.slice(-USUAL_SETS_SESSIONS).map((s) => doneWork(s).filter((set) => !set.extra).length).filter(Boolean);
   return counts.length ? Math.max(1, Math.round(median(counts))) : DEFAULT_WORK_SETS;
 }
 
@@ -249,7 +251,8 @@ function workPlan(
   repDrop: number,
   count: number,
 ): SetPlan[] {
-  const sets = doneWork(last);
+  // Focus's extras go by its own plan, so the usual sets are planned from the usual ones.
+  const sets = doneWork(last).filter((set) => !set.extra || set === lead);
   const needed = Math.max(count, sets.indexOf(lead) + 1);
   let usedLead = false;
   return Array.from({ length: needed }, (_, i): SetPlan => {
@@ -268,7 +271,7 @@ function workPlan(
 function timedSuggestion(last: Session, top: SessionSet, reason: ReasonCode, params: Suggestion['params']): Suggestion {
   const seconds = params.target;
   const shorter = seconds < (top.seconds ?? 0);
-  const done = doneWork(last);
+  const done = doneWork(last).filter((set) => !set.extra || set === top);
   const dropped = params.fewerSets ? [...done].reverse().find((set) => set !== top) : undefined;
   const sets = done.filter((set) => set !== dropped).map((set) => ({
     kind: 'work' as const,

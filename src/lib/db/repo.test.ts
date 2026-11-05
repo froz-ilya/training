@@ -527,6 +527,56 @@ describe('failure and level', () => {
   });
 });
 
+describe('sets Focus added', () => {
+  const plan = {
+    exercises: [
+      {
+        exerciseId: 'barbell-bench-press',
+        sets: [
+          { kind: 'work' as const, weightKg: 50, reps: 8, extra: false },
+          { kind: 'work' as const, weightKg: 50, reps: 8 },
+          { kind: 'work' as const, weightKg: 50, reps: 8, extra: true },
+        ],
+      },
+    ],
+  };
+  const marks = async (id: string) => (await setsOf(id)).sort((a, b) => a.order - b.order).map((s) => s.extra);
+
+  it('stores the mark only on the sets that have it', async () => {
+    const id = await createFromPlan(plan, 'active');
+    expect(await marks(id)).toEqual([undefined, undefined, true]);
+    expect((await setsOf(id)).some((s) => 'extra' in s && s.extra !== true)).toBe(false);
+  });
+
+  it('keeps it when a plan is applied to a card', async () => {
+    const id = await createFromPlan({ exercises: [{ exerciseId: 'barbell-bench-press', sets: [{ kind: 'work', weightKg: 50, reps: 8 }] }] }, 'active');
+    await applyPlan(id, 0, plan.exercises[0].sets);
+    expect(await marks(id)).toEqual([undefined, undefined, true]);
+  });
+
+  it('never marks a set added by hand, even after an extra one', async () => {
+    const id = await createFromPlan(plan, 'active');
+    const added = await db.sets.get(await addSet(id, 0));
+    expect(added).toMatchObject({ weightKg: 50, reps: 8 });
+    expect(added?.extra).toBeUndefined();
+  });
+
+  it('repeating a workout keeps the sets but not the mark', async () => {
+    const id = await createFromPlan(plan, 'active');
+    await finishWorkout(id);
+    const copy = await repeatWorkout(id);
+    expect(await marks(copy)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('a new card starts from last time’s usual sets, without the extra one', async () => {
+    const id = await createFromPlan(plan, 'active');
+    await finishWorkout(id);
+    const next = await createWorkout({ date: '2099-01-01' });
+    await addExercise(next, 'barbell-bench-press');
+    expect(await marks(next)).toEqual([undefined, undefined]);
+  });
+});
+
 describe('editing the next workout', () => {
   const draft = (...exerciseIds: string[]) => ({
     exercises: exerciseIds.map((exerciseId) => ({ exerciseId, sets: [{ kind: 'work' as const, weightKg: 60, reps: 8 }] })),

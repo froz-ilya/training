@@ -93,8 +93,12 @@ migration that is tested.
   steers the next workout (src/lib/coach/focus.ts): Focus adds one exercise per region while it's short
   for the week, at most two a workout, and only if the workout stays within a point of its usual
   difficulty. A pick swaps a filler that trains its other main muscle; otherwise the first goes on top
-  if that fits, and any other swaps a filler. Medium and hard picks go straight after the main lifts,
-  light ones last.
+  if that fits, and any other swaps a filler, or goes on top too when there's none. Medium and hard
+  picks go straight after the main lifts, light ones last. A muscle still short then gets a set more on
+  exercises already planned for it, lightest first, one an exercise and four a workout, unless that
+  exercise's plan is easing off (pain, a break, a lighter week). Those sets are stored with
+  `extra: true`: the usual set count leaves them out, so turning Focus off goes straight back to it,
+  while everything else counts them as work.
   Maintain drops fillers once its range is met. Main lifts and weights don't change.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never

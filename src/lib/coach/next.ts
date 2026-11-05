@@ -44,6 +44,12 @@ export interface FocusPick {
   overlap?: BodyRegion;
 }
 
+/** One more work set than usual on an exercise already in the plan, for a Focus muscle that's still short. */
+export interface FocusExtra {
+  exerciseId: string;
+  region: BodyRegion;
+}
+
 export interface PlannedType {
   key: string;
   exerciseIds: string[];
@@ -60,6 +66,8 @@ export interface PlannedType {
   /** Muscles brought in because they're due this week. */
   added: Muscle[];
   focus: FocusPick[];
+  /** Exercises that get a set more than usual, at most one each. */
+  extraSets: FocusExtra[];
   /** Exercises in the plan that take the place of an avoided one. */
   standIns: StandIn[];
   /** The exercise marked Sometimes that's in the plan because it's due. */
@@ -588,6 +596,7 @@ function planType(
     // A focus can take the slot of what was added, and then it isn't there to report.
     added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
     focus: focus.picks.map(({ replaced, overlap, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced, overlap } : focusPick)),
+    extraSets: focus.extra,
     standIns: inPlan,
     sometimes: back?.replaced && isNew(back.replaced) ? { exerciseId: back.exerciseId, last: back.last } : back,
     partners,

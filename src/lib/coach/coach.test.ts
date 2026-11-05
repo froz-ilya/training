@@ -2063,3 +2063,40 @@ describe('direction of the recent sessions', () => {
     expect(statusOf([175, 165, 160, 155, 150, 145, 140, 135, 130], { goal: 'maintain' }).state).toBe('holding');
   });
 });
+
+describe('sets Focus added', () => {
+  const today = '2026-03-05';
+  /** Three usual sets and one Focus added on top. */
+  const withExtra = (date: string): Session => {
+    const usual = session(date, [60, 8], [60, 8], [60, 8]);
+    return { ...usual, sets: [...usual.sets, { kind: 'work', weightKg: 60, reps: 8, extra: true }] };
+  };
+  const history = [withExtra('2026-02-19'), withExtra('2026-02-26'), withExtra('2026-03-02')];
+
+  it('leaves them out of the usual number of work sets', () => {
+    expect(usualWorkSets(history)).toBe(3);
+  });
+
+  it('still counts them as work everywhere else', () => {
+    expect(doneWork(history[2])).toHaveLength(4);
+  });
+
+  it('plans the usual sets without them, and marks nothing as extra', () => {
+    const s = suggestSets(press, history, { today })!;
+    const work = s.sets.filter((x) => x.kind === 'work');
+    expect(work).toHaveLength(3);
+    expect(work.some((x) => x.extra)).toBe(false);
+  });
+
+  it('plans timed sets without them', () => {
+    const timed: Session = {
+      workoutId: 'p',
+      date: '2026-03-02',
+      position: 1,
+      sets: [60, 60, 60, 60].map((seconds, i): SessionSet => ({ kind: 'work', weightKg: 0, reps: 0, seconds, ...(i === 3 ? { extra: true } : {}) })),
+    };
+    const s = suggestSets(plank, [timed], { today })!;
+    expect(s.sets).toHaveLength(3);
+    expect(s.sets.some((x) => x.extra)).toBe(false);
+  });
+});

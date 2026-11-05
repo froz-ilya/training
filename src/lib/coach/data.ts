@@ -21,7 +21,7 @@ import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
 import { exerciseStatus, type ExerciseStatus } from './status';
 import { atLatestLevel, bodyKg, comparableBefore, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
-import { BREAK_MIN_DAYS, suggestSets, type SetPlan, type Suggestion } from './suggest';
+import { BREAK_MIN_DAYS, suggestSets, type ReasonCode, type SetPlan, type Suggestion } from './suggest';
 import { calendarWeeks, newBests, weeklyVolume, type CalendarDay, type NewBest, type WeekVolume } from './summary';
 
 /** Everything the coach knows about one exercise. */
@@ -100,7 +100,7 @@ function toSessions(sets: WorkoutSet[], ranks: Ranks, notes?: NoteIndex, around?
         if (prior) session.priorWork = prior;
       }
     }
-    session.sets.push({ kind: set.kind, weightKg: set.weightKg, reps: set.reps, seconds: set.seconds, failure: set.failure, level: set.level });
+    session.sets.push({ kind: set.kind, weightKg: set.weightKg, reps: set.reps, seconds: set.seconds, failure: set.failure, level: set.level, extra: set.extra });
   }
   return markHeldBack([...sessions.values()]);
 }
@@ -508,10 +508,20 @@ export interface NextWorkout {
   added: Muscle[];
   /** Exercises brought in for a Focus muscle, and what each replaced, if anything. */
   focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion }[];
+  /** Exercises with a set more for a Focus muscle, in plan order. */
+  extraSets: { exercise: Exercise; region: BodyRegion }[];
   /** Exercises planned in place of ones the user doesn't want suggested. */
   standIns: { exercise: Exercise; instead: Exercise; fresh: boolean }[];
   /** The exercise marked Sometimes that's in because it's due, when it was last done and what it replaced. */
   sometimes?: { exercise: Exercise; last?: string; replaced?: Exercise };
+}
+
+/** Reasons the plan holds back today, which a set more would go against. */
+const HOLDS_BACK: readonly ReasonCode[] = ['pain', 'lighterWeek', 'afterBreak', 'afterBreakReps', 'afterBreakTime', 'afterBreakSame', 'climbBack'];
+
+/** A Focus set more goes only where the plan isn't easing off. */
+function takesMore(suggestion: Suggestion): boolean {
+  return !HOLDS_BACK.includes(suggestion.reason) && !suggestion.params.fewerSets;
 }
 
 /**
@@ -537,6 +547,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const around = { perWorkout: group(sets, (s) => s.workoutId), exercises, body };
   const others = elsewhere(sets, exercises);
   const list: NextWorkout['exercises'] = [];
+  const extraSets: NextWorkout['extraSets'] = [];
   const planned: WorkoutRow[] = [];
   for (const id of plan.exerciseIds) {
     const exercise = exercises.get(id);
@@ -544,7 +555,11 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
     const position = list.length + 1;
     const prior = priorWork(exercise, planned, position, exercises, body);
     const view = buildView(exercise, toSessions(perExercise.get(id) ?? [], ranks, noted, around), stored, today, training, others, position, prior);
-    const sets = view.suggestion?.sets ?? [];
+    const usual = view.suggestion?.sets ?? [];
+    const more = plan.extraSets.find((e) => e.exerciseId === id);
+    const last = usual.filter((set) => set.kind === 'work').at(-1);
+    const sets = more && last && takesMore(view.suggestion!) ? [...usual, { ...last, extra: true }] : usual;
+    if (sets !== usual) extraSets.push({ exercise, region: more!.region });
     list.push({ exercise, sets, suggestion: view.suggestion });
     planned.push(...sets.map((set) => ({ ...set, exerciseId: id, entry: position })));
   }
@@ -559,7 +574,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
   const back = plan.sometimes;
   const sometimes = back && { exercise: exercises.get(back.exerciseId)!, last: back.last, replaced: back.replaced ? exercises.get(back.replaced) : undefined };
-  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, standIns, sometimes };
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, extraSets, standIns, sometimes };
 }
 
 // ---------- Saving ----------

@@ -305,7 +305,10 @@ describe('what a Focus pick costs and where it goes', () => {
 
   it('picks nothing when nothing passes the limit', () => {
     const mainLifts = LEGS.slice(0, 3);
-    expect(fit({ ...legDay, exerciseIds: mainLifts, recent: ['hip-abductor'], usualPoints: 4 }, { glutes: 'focus' })).toEqual({ exerciseIds: mainLifts, picks: [] });
+    const { exerciseIds, picks, extra } = fit({ ...legDay, exerciseIds: mainLifts, recent: ['hip-abductor', ...mainLifts], usualPoints: 4 }, { glutes: 'focus' });
+    expect({ exerciseIds, picks }).toEqual({ exerciseIds: mainLifts, picks: [] });
+    // A set more isn't held to the limit: it's what's left when no exercise fits.
+    expect(extra).toEqual([{ exerciseId: 'barbell-squat', region: 'glutes' }]);
   });
 
   it('only gates picks: a plan over the limit stays as it is', () => {
@@ -344,6 +347,57 @@ describe('what a Focus pick costs and where it goes', () => {
     const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
     expect(focus.map((pick) => pick.exerciseId)).toEqual(['hip-abductor']);
     expect(exerciseIds).toEqual([...LEGS, 'hip-abductor']);
+  });
+});
+
+describe('a set more for a Focus muscle', () => {
+  const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
+  /** Nothing can join: the day is full and every exercise is a main lift. */
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
+
+  it('goes on the lightest exercise first, one set each, until the range is met', () => {
+    // Chest's Focus range starts at 12, and three exercises plan 9.
+    expect(fit(full, { chest: 'focus' }).extra.map((e) => e.exerciseId)).toEqual(['pec-deck', 'barbell-bench-press', 'incline-dumbbell-press']);
+    expect(fit(full, { chest: 'focus' }, new Map([['chest', 2]])).extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }]);
+  });
+
+  it('adds nothing once the week has had enough, or without a Focus', () => {
+    expect(fit(full, { chest: 'focus' }, new Map([['chest', 3]])).extra).toEqual([]);
+    expect(fit(full, {}).extra).toEqual([]);
+    expect(fit(full, { chest: 'maintain' }).extra).toEqual([]);
+  });
+
+  it('keeps to a few sets a workout', () => {
+    const withArms = { ...full, exerciseIds: [...PRESSES, 'rope-pushdown'], anchors: [...PRESSES, 'rope-pushdown'], max: 4, recent: [...PRESSES, 'rope-pushdown'] };
+    const { extra } = fit(withArms, { chest: 'focus', triceps: 'focus' });
+    expect(extra).toHaveLength(4);
+    expect(new Set(extra.map((e) => e.exerciseId)).size).toBe(4);
+    expect(extra.map((e) => e.region)).toEqual(expect.arrayContaining(['chest', 'triceps']));
+  });
+
+  it('only goes on exercises the user has done, and not on one just brought in', () => {
+    // Nothing to copy a set from: the user has done only the bench press.
+    expect(fit({ ...full, recent: ['barbell-bench-press'] }, { chest: 'focus' }).extra).toEqual([{ exerciseId: 'barbell-bench-press', region: 'chest' }]);
+    const two = PRESSES.slice(0, 2);
+    const { picks, extra } = fit({ ...full, exerciseIds: two, anchors: two, recent: [...two, 'cable-crossover'] }, { chest: 'focus' });
+    expect(picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
+    expect(extra.map((e) => e.exerciseId)).toEqual(two);
+  });
+
+  it('counts the sets of a new exercise first', () => {
+    const roomy = { ...full, max: 4 };
+    const { picks, extra } = fit({ ...roomy, recent: [...PRESSES, 'cable-crossover'] }, { chest: 'focus' });
+    expect(picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
+    expect(extra).toEqual([]);
+  });
+
+  it('lets a second pick go on top when there is no filler to give up', () => {
+    const LEGS_ALL: FocusPlan = { ...full, exerciseIds: LEGS, anchors: LEGS, groups: ['legs'], max: 7 };
+    const { picks, exerciseIds } = fit({ ...LEGS_ALL, recent: [...LEGS, 'hip-thrust', 'standing-calf-raise'] }, { glutes: 'focus', calves: 'focus' });
+    expect(picks.map((p) => p.exerciseId).sort()).toEqual(['hip-thrust', 'standing-calf-raise']);
+    expect(picks.every((p) => p.replaced === undefined)).toBe(true);
+    expect(exerciseIds).toHaveLength(7);
   });
 });
 

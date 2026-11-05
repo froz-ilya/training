@@ -128,7 +128,14 @@ export function repeatWorkout(id: string): Promise<string> {
     const date = toISODate();
     const rows = await db.sets.where('workoutId').equals(id).toArray();
     const sets = source?.status === 'done' ? await effectiveHistory(rows) : rows;
-    await db.sets.bulkAdd(sets.map((s) => ({ ...s, id: newId(), workoutId: copyId, date, done: false })));
+    // The copy keeps every set, but Focus's mark belongs to the plan it came from.
+    await db.sets.bulkAdd(
+      sets.map((s) => {
+        const set: WorkoutSet = { ...s, id: newId(), workoutId: copyId, date, done: false };
+        delete set.extra;
+        return set;
+      }),
+    );
     return copyId;
   });
 }
@@ -138,7 +145,7 @@ export interface WorkoutPlan {
   exercises: { exerciseId: string; sets: PlannedSet[] }[];
 }
 
-export type PlannedSet = Pick<WorkoutSet, 'kind' | 'weightKg' | 'reps' | 'seconds' | 'level' | 'failure'>;
+export type PlannedSet = Pick<WorkoutSet, 'kind' | 'weightKg' | 'reps' | 'seconds' | 'level' | 'failure' | 'extra'>;
 
 function planRows(base: Pick<WorkoutSet, 'workoutId' | 'exerciseId' | 'date' | 'entry'>, sets: PlannedSet[]): WorkoutSet[] {
   return sets.map((set, order) => {
@@ -146,6 +153,7 @@ function planRows(base: Pick<WorkoutSet, 'workoutId' | 'exerciseId' | 'date' | '
     if (set.seconds !== undefined) row.seconds = set.seconds;
     if (set.level !== undefined) row.level = set.level;
     if (set.failure) row.failure = true;
+    if (set.extra) row.extra = true;
     return row;
   });
 }
@@ -255,7 +263,7 @@ export async function lastPerformance(
   return null;
 }
 
-/** Adds an exercise as a new card, filled in with last time's sets when there are any. */
+/** Adds an exercise as a new card, filled in with last time's sets when there are any, leaving out Focus's extras. */
 export function addExercise(workoutId: string, exerciseId: string): Promise<number> {
   return db.transaction('rw', db.workouts, db.sets, db.customExercises, async () => {
     const workout = await db.workouts.get(workoutId);
@@ -264,8 +272,9 @@ export function addExercise(workoutId: string, exerciseId: string): Promise<numb
     const entry = Math.max(-1, ...existing.map((s) => s.entry)) + 1;
     const last = await lastPerformance(exerciseId, { before: workout.date, excludeWorkoutId: workoutId });
     const base = { workoutId, exerciseId, date: workout.date, entry, done: workout.status === 'done' };
-    const sets: WorkoutSet[] = last
-      ? last.sets.map((s, order) => {
+    const usual = last?.sets.filter((s) => !s.extra) ?? [];
+    const sets: WorkoutSet[] = usual.length
+      ? usual.map((s, order) => {
           const set: WorkoutSet = { ...base, id: newId(), order, kind: s.kind, weightKg: s.weightKg, reps: s.reps };
           if (s.seconds !== undefined) set.seconds = s.seconds;
           if (s.level !== undefined) set.level = s.level;

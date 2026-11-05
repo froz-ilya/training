@@ -36,6 +36,8 @@ export interface SessionSet {
   failure?: boolean;
   /** The bar or platform height, as numbered in the gym. */
   level?: number;
+  /** Added by Focus on top of the usual sets, so it doesn't count towards them. */
+  extra?: boolean;
 }
 
 /** One comparable work set, as a session's whole work is compared. Worked out on reading. */

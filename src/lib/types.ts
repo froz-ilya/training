@@ -129,6 +129,8 @@ export interface WorkoutSet {
   failure?: boolean;
   /** The bar or platform height, as numbered in the gym. Whether higher is easier depends on the exercise. */
   level?: number;
+  /** Added by Focus on top of the usual sets. The usual count leaves it out; everything else counts it as work. */
+  extra?: boolean;
   done: boolean;
   note?: string;
 }

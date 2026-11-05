@@ -171,6 +171,8 @@ const isKey = (value: unknown) => (typeof value === 'string' && value !== '') ||
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const isText = (value: unknown) => typeof value === 'string';
 const isFlag = (value: unknown) => typeof value === 'boolean';
+/** For a mark that's only ever stored as `true`. */
+const isTrue = (value: unknown) => value === true;
 
 const EQUIPMENT: Equipment[] = ['barbell', 'dumbbell', 'machine', 'cable', 'smith', 'bodyweight', 'other'];
 const LOADS: Load[] = ['weight', 'body', 'time'];
@@ -199,7 +201,7 @@ function normalizeWorkout(w: Workout): Workout {
 }
 
 function normalizeSet(s: WorkoutSet): WorkoutSet {
-  const row = dropBad(dropBad(dropBad(s, isCount, 'seconds', 'level'), isFlag, 'failure'), isText, 'note');
+  const row = dropBad(dropBad(dropBad(dropBad(s, isCount, 'seconds', 'level'), isFlag, 'failure'), isText, 'note'), isTrue, 'extra');
   return {
     ...row,
     entry: isCount(s.entry) ? s.entry : 0,

@@ -7,6 +7,7 @@ import { toISODate } from '../dates';
 import { db } from '../db/schema';
 import { settings } from '../settings.svelte';
 import type { BodyRegion, Exercise, RegionGoal, WorkoutSet } from '../types';
+import type { MuscleGroup } from '../catalog/groups';
 import { typeTitle } from '../workout/title';
 import { loadNextWorkout } from './data';
 import { fitWeek, type MuscleBudget, type WeekPlan } from './budget';
@@ -244,13 +245,14 @@ describe('what a Focus pick costs and where it goes', () => {
   it('tries the next exercise, even one done more recently', () => {
     const { exerciseIds, picks } = fit({ ...backDay, partners: ['glutes'], recent: ['deadlift', 'hip-abductor'] }, { glutes: 'focus' });
     expect(picks).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
-    expect(exerciseIds).toEqual([...BACK, 'hip-abductor']);
+    // Glutes join this back day, so their pick goes straight after the main lifts.
+    expect(exerciseIds).toEqual([...BACK.slice(0, 3), 'hip-abductor', ...BACK.slice(3)]);
   });
 
   it('leaves a hard lift out of a leg day at its usual cost, even in a filler’s place', () => {
     const history = [on(70, ['bulgarian-split-squat']), ...alternating(LEGS, [...CHEST.slice(0, 4), 'hip-abductor'])];
     const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
-    expect(exerciseIds).toEqual([...LEGS, 'hip-abductor']);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hip-abductor', ...LEGS.slice(3)]);
     expect(focus).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
   });
 
@@ -301,6 +303,23 @@ describe('what a Focus pick costs and where it goes', () => {
     expect(exerciseIds).toEqual([...BACK.slice(0, 3), 'overhead-press', 'shrug', 'lateral-raise']);
   });
 
+  it('puts a light pick for the day’s own muscle straight after the main lifts', () => {
+    const { exerciseIds, picks } = fit({ ...legDay, recent: ['hip-abductor'], usualPoints: 30 }, { glutes: 'focus' });
+    expect(picks).toEqual([{ exerciseId: 'hip-abductor', region: 'glutes', fresh: false }]);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hip-abductor', ...LEGS.slice(3)]);
+  });
+
+  it('puts a heavier pick after it ahead of it', () => {
+    const { exerciseIds, picks } = fit({ ...legDay, exerciseIds: LEGS.slice(0, 4), recent: ['seated-leg-curl', 'hack-squat'], usualPoints: 30 }, { hamstrings: 'focus', quads: 'focus' });
+    expect(picks.map((pick) => pick.exerciseId)).toEqual(['seated-leg-curl', 'hack-squat']);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hack-squat', 'seated-leg-curl', 'leg-extension']);
+  });
+
+  it('keeps a small muscle’s light pick last', () => {
+    const { exerciseIds } = fit({ ...legDay, recent: ['standing-calf-raise'], usualPoints: 30 }, { calves: 'focus' });
+    expect(exerciseIds).toEqual([...LEGS, 'standing-calf-raise']);
+  });
+
   it('places a pick by the same rule when it replaces a filler, not in the filler’s slot', () => {
     const forMuscle = fit({ ...legDay, recent: ['romanian-deadlift'], usualPoints: 9 }, { glutes: 'focus' });
     expect(forMuscle.picks[0]).toMatchObject({ replaced: 'seated-leg-curl', overlap: 'hamstrings' });
@@ -314,8 +333,8 @@ describe('what a Focus pick costs and where it goes', () => {
     const mainLifts = LEGS.slice(0, 3);
     const { exerciseIds, picks, extra } = fit({ ...legDay, exerciseIds: mainLifts, recent: ['hip-abductor', ...mainLifts], usualPoints: 4 }, { glutes: 'focus' });
     expect({ exerciseIds, picks }).toEqual({ exerciseIds: mainLifts, picks: [] });
-    // A set more isn't held to the limit: it's what's left when no exercise fits.
-    expect(extra).toEqual([{ exerciseId: 'barbell-squat', region: 'glutes' }]);
+    // Only the squat trains glutes here: a main lift, and hard, so it takes no set more either.
+    expect(extra).toEqual([]);
   });
 
   it('only gates picks: a plan over the limit stays as it is', () => {
@@ -353,20 +372,42 @@ describe('what a Focus pick costs and where it goes', () => {
     const history = [on(70, ['bulgarian-split-squat']), on(20, [...LEGS, 'deadlift', 'overhead-press']), ...alternating(LEGS, CHEST).slice(1)];
     const { exerciseIds, focus } = plan(history, { glutes: 'focus' });
     expect(focus.map((pick) => pick.exerciseId)).toEqual(['hip-abductor']);
-    expect(exerciseIds).toEqual([...LEGS, 'hip-abductor']);
+    expect(exerciseIds).toEqual([...LEGS.slice(0, 3), 'hip-abductor', ...LEGS.slice(3)]);
   });
 });
 
 describe('a set more for a Focus muscle', () => {
   const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
-  /** Nothing can join: the day is full and every exercise is a main lift. */
-  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  /** Nothing can join: the day is full, and the presses are its main lifts. */
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES.slice(0, 2), groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
   const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
 
-  it('goes on the lightest exercise first, one set each, until the range is met', () => {
+  it('goes on the pec deck, never on the bench or incline press, the main lifts', () => {
     // Chest's Focus range starts at 12, and three exercises plan 9.
-    expect(fit(full, { chest: 'focus' }).extra.map((e) => e.exerciseId)).toEqual(['pec-deck', 'barbell-bench-press', 'incline-dumbbell-press']);
-    expect(fit(full, { chest: 'focus' }, new Map([['chest', 2]])).extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }]);
+    expect(fit(full, { chest: 'focus' }).extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }]);
+  });
+
+  it('goes on a light exercise first, then a medium one that isn’t a main lift, one set each', () => {
+    const day = ['barbell-bench-press', 'machine-chest-press', 'pec-deck'];
+    const base = { ...full, exerciseIds: day, anchors: day.slice(0, 1), recent: day };
+    expect(fit(base, { chest: 'focus' }).extra.map((e) => e.exerciseId)).toEqual(['pec-deck', 'machine-chest-press']);
+    expect(fit(base, { chest: 'focus' }, new Map([['chest', 2]])).extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }]);
+  });
+
+  it('takes a light main lift, a few easy minutes', () => {
+    expect(fit({ ...full, anchors: PRESSES }, { chest: 'focus' }).extra).toEqual([{ exerciseId: 'pec-deck', region: 'chest' }]);
+  });
+
+  it('never goes on a hard exercise, even one that isn’t a main lift', () => {
+    const day = ['leg-press', 'bulgarian-split-squat', 'leg-extension'];
+    const legs: FocusPlan = { ...full, exerciseIds: day, anchors: day.slice(0, 1), groups: ['legs'], recent: day };
+    expect(fit(legs, { quads: 'focus' }).extra).toEqual([{ exerciseId: 'leg-extension', region: 'quads' }]);
+  });
+
+  it('adds none when only main lifts and hard exercises train the muscle, and the muscle waits', () => {
+    const day = ['barbell-squat', 'leg-press', 'bulgarian-split-squat'];
+    const legs: FocusPlan = { ...full, exerciseIds: day, anchors: day.slice(0, 2), groups: ['legs'], recent: day };
+    expect(fit(legs, { quads: 'focus' })).toEqual({ exerciseIds: day, picks: [], extra: [] });
   });
 
   it('adds nothing once the week has had enough, or without a Focus', () => {
@@ -376,20 +417,27 @@ describe('a set more for a Focus muscle', () => {
   });
 
   it('keeps to a few sets a workout', () => {
-    const withArms = { ...full, exerciseIds: [...PRESSES, 'rope-pushdown'], anchors: [...PRESSES, 'rope-pushdown'], max: 4, recent: [...PRESSES, 'rope-pushdown'] };
-    const { extra } = fit(withArms, { chest: 'focus', triceps: 'focus' });
+    const day = [...PRESSES, 'rope-pushdown', 'lateral-raise', 'cable-lateral-raise', 'dumbbell-curl'];
+    const withArms = { ...full, exerciseIds: day, max: day.length, recent: day };
+    const { extra } = fit(withArms, { chest: 'focus', triceps: 'focus', sideDelts: 'focus', biceps: 'focus' });
     expect(extra).toHaveLength(4);
     expect(new Set(extra.map((e) => e.exerciseId)).size).toBe(4);
-    expect(extra.map((e) => e.region)).toEqual(expect.arrayContaining(['chest', 'triceps']));
+    expect(extra[0]).toEqual({ exerciseId: 'pec-deck', region: 'chest' });
   });
 
-  it('only goes on exercises the user has done, and not on one just brought in', () => {
-    // Nothing to copy a set from: the user has done only the bench press.
-    expect(fit({ ...full, recent: ['barbell-bench-press'] }, { chest: 'focus' }).extra).toEqual([{ exerciseId: 'barbell-bench-press', region: 'chest' }]);
+  it('only goes on exercises the user has done', () => {
+    // Nothing to copy a set from: the pec deck is new to the user, and the rest are main lifts.
+    expect(fit({ ...full, recent: PRESSES.slice(0, 2) }, { chest: 'focus' }).extra).toEqual([]);
+  });
+
+  it('gives a pick none on the day it’s first brought in, and one from its second time', () => {
     const two = PRESSES.slice(0, 2);
-    const { picks, extra } = fit({ ...full, exerciseIds: two, anchors: two, recent: [...two, 'cable-crossover'] }, { chest: 'focus' });
-    expect(picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
-    expect(extra.map((e) => e.exerciseId)).toEqual(two);
+    const first = fit({ ...full, exerciseIds: two, recent: two }, { chest: 'focus' });
+    expect(first.picks).toMatchObject([{ fresh: true }]);
+    expect(first.extra).toEqual([]);
+    const again = fit({ ...full, exerciseIds: two, recent: [...two, 'cable-crossover'] }, { chest: 'focus' });
+    expect(again.picks).toEqual([{ exerciseId: 'cable-crossover', region: 'chest', fresh: false }]);
+    expect(again.extra).toEqual([{ exerciseId: 'cable-crossover', region: 'chest' }]);
   });
 
   it('counts the sets of a new exercise first', () => {
@@ -436,7 +484,7 @@ describe('light work on another day', () => {
     const { exerciseIds, picks, extra } = fit(chestDay, hamstrings);
     expect(picks).toEqual([{ exerciseId: 'lying-leg-curl', region: 'hamstrings', fresh: false, otherDay: true }]);
     expect(exerciseIds).toEqual([...CHEST4, 'lying-leg-curl']);
-    // It came in today, so it gets no set more.
+    // Light work on another day stays as it is, though the user has done it before.
     expect(extra).toEqual([]);
   });
 
@@ -505,6 +553,67 @@ describe('light work on another day', () => {
 
   it('needs today’s date', () => {
     expect(fit({ ...chestDay, today: undefined }, hamstrings).picks).toEqual([]);
+  });
+
+  describe('with its own day later in the week', () => {
+    /** Back in two days, then legs in four. */
+    const upcoming = [
+      { groups: ['back'] as MuscleGroup[], partners: [], days: 2 },
+      { groups: ['legs'] as MuscleGroup[], partners: [], days: 4 },
+    ];
+    const share = (budget: number, byDaysAgo: number[] = []): FocusWeek => ({
+      budget,
+      given: new Map([['hamstrings', byDaysAgo.reduce((sum, sets) => sum + sets, 0)]]),
+      earlier: new Map(),
+      byDaysAgo,
+    });
+
+    it('keeps a new exercise’s sets for the leg day before it spends any here', () => {
+      // Five sets in all: three for the leg curl here would leave the leg day two.
+      expect(fit({ ...chestDay, upcoming, week: share(5) }, hamstrings)).toMatchObject({ picks: [], held: 'ownDay' });
+      expect(fit({ ...chestDay, upcoming, week: share(6) }, hamstrings).picks).toMatchObject([{ exerciseId: 'lying-leg-curl', otherDay: true }]);
+      // Further off than the 7 days the share counts, nothing is kept.
+      expect(fit({ ...chestDay, upcoming: [{ ...upcoming[1], days: 7 }], week: share(5) }, hamstrings).picks).toHaveLength(1);
+    });
+
+    it('counts only what will still count on that day', () => {
+      // Three sets from 3 days ago will be a week old on the leg day; from 2 days ago they still count then.
+      expect(fit({ ...chestDay, upcoming, week: share(8, [0, 0, 0, 3]) }, hamstrings).picks).toHaveLength(1);
+      expect(fit({ ...chestDay, upcoming, week: share(8, [0, 0, 3]) }, hamstrings)).toMatchObject({ picks: [], held: 'ownDay' });
+      // Without the days, all of it is taken to count still.
+      expect(fit({ ...chestDay, upcoming, week: { ...share(8, [0, 0, 0, 3]), byDaysAgo: undefined } }, hamstrings).picks).toEqual([]);
+    });
+
+    it('lets another muscle use what the one first in line won’t need by its own day', () => {
+      // Hamstrings waited and are planned already; quads got four sets 3 days ago, which are gone by the leg day.
+      const withCurl: FocusPlan = { ...chestDay, exerciseIds: [...CHEST4.slice(0, 3), 'seated-leg-curl'], upcoming };
+      const both: Goals = { quads: 'focus', hamstrings: 'focus' };
+      const gone: FocusWeek = { budget: 8, given: new Map([['quads', 4], ['hamstrings', 0]]), earlier: new Map(), byDaysAgo: [0, 0, 0, 4] };
+      expect(fit({ ...withCurl, week: gone }, both)).toMatchObject({
+        picks: [{ exerciseId: 'leg-extension', region: 'quads', otherDay: true }],
+        extra: [{ exerciseId: 'seated-leg-curl', region: 'hamstrings' }],
+      });
+      // From yesterday, they still count on the leg day, so the room stays kept for hamstrings there.
+      const kept = fit({ ...withCurl, week: { ...gone, byDaysAgo: [0, 4] } }, both);
+      expect(kept).toMatchObject({ picks: [], held: 'turn' });
+    });
+
+    it('keeps the leg day’s own hamstring work in a beginner’s rotation', () => {
+      const BEG = [
+        ['machine-chest-press', 'machine-shoulder-press', 'rope-pushdown'],
+        ['lat-pulldown', 'seated-cable-row', 'dumbbell-curl'],
+        ['leg-press', 'leg-extension', 'crunch'],
+      ];
+      // Mondays, Wednesdays and Fridays for three weeks: chest comes up today, and legs on Friday.
+      const history = [21, 19, 17, 14, 12, 10, 7, 5, 3].map((daysAgo, i) => on(daysAgo, BEG[i % 3]));
+      const chest = plan(history, hamstrings);
+      expect(chest.key).toBe('chest');
+      expect(chest.focus).toEqual([]);
+      expect(chest.focusHeld).toBe('ownDay');
+      const legs = plan(history, hamstrings, { type: 'legs' });
+      expect(legs.focus).toMatchObject([{ region: 'hamstrings' }]);
+      expect(legs.focus[0].otherDay).toBeUndefined();
+    });
   });
 
   describe('in a rotation', () => {
@@ -742,9 +851,9 @@ describe('focusWeek', () => {
 });
 
 describe('Focus’s share of the week', () => {
-  const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
-  /** Three sets more would bring chest into its range; nothing can join. */
-  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  const PRESSES = ['barbell-bench-press', 'machine-chest-press', 'pec-deck'];
+  /** Three sets more would bring chest into its range, and two can go on, past the bench press; nothing can join. */
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES.slice(0, 1), groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
   const share = (budget: number, given: Partial<Record<BodyRegion, number>> = {}, earlier: Partial<Record<BodyRegion, number>> = {}): FocusWeek => ({
     budget,
     given: new Map(Object.entries(given) as [BodyRegion, number][]),
@@ -753,10 +862,10 @@ describe('Focus’s share of the week', () => {
   const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
 
   it('stops adding once the week has had Focus’s share, and says so', () => {
-    expect(fit({ ...full, week: share(8) }, { chest: 'focus' })).toMatchObject({ extra: [{}, {}, {}] });
+    expect(fit({ ...full, week: share(8) }, { chest: 'focus' })).toMatchObject({ extra: [{}, {}] });
     expect(fit({ ...full, week: share(8) }, { chest: 'focus' }).held).toBeUndefined();
-    const { extra, held } = fit({ ...full, week: share(8, { chest: 6 }) }, { chest: 'focus' });
-    expect(extra).toHaveLength(2);
+    const { extra, held } = fit({ ...full, week: share(8, { chest: 7 }) }, { chest: 'focus' });
+    expect(extra).toHaveLength(1);
     expect(held).toBe('week');
     expect(fit({ ...full, week: share(8, { chest: 8 }) }, { chest: 'focus' })).toMatchObject({ extra: [], held: 'week' });
   });
@@ -766,7 +875,7 @@ describe('Focus’s share of the week', () => {
     expect(fit({ ...roomy, week: share(4) }, { chest: 'focus' }).picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
     const { picks, extra, held } = fit({ ...roomy, week: share(3) }, { chest: 'focus' });
     expect(picks).toEqual([]);
-    expect(extra).toHaveLength(3);
+    expect(extra).toHaveLength(2);
     expect(held).toBe('week');
   });
 
@@ -823,7 +932,7 @@ describe('Focus’s share of the week', () => {
 
     it('lets nobody else take the room while the muscle first in line is waiting for it', () => {
       // Two sets left: quads would take them, but hamstrings waited and need three for a new exercise.
-      const squats = { ...legDay, exerciseIds: legDay.exerciseIds.slice(0, 2), anchors: legDay.anchors.slice(0, 2), week: share(5, { quads: 3 }) };
+      const squats = { ...legDay, exerciseIds: ['barbell-squat', 'leg-press', 'leg-extension'], anchors: ['barbell-squat'], week: share(5, { quads: 3 }) };
       expect(fit(squats, { quads: 'focus' }, week).extra).toHaveLength(2);
       const { picks, extra, held } = fit(squats, both, week);
       expect(picks).toEqual([]);
@@ -982,7 +1091,8 @@ describe('which Focus muscle goes first', () => {
 
 describe('a workout’s usual length', () => {
   const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
-  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  /** Sets more can go on the incline press and the pec deck. */
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES.slice(0, 1), groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
   const fit = (base: FocusPlan, goals: Goals) => applyFocus(base, goals, new Map(), exercises);
   const timed = (daysAgo: number, ids: string[], minutes: number, sets?: Record<string, number>): RotationWorkout => ({ ...on(daysAgo, ids, sets), minutes });
 
@@ -997,7 +1107,9 @@ describe('a workout’s usual length', () => {
     const capped = fit({ ...LEGS5, maxSets: 15 }, { calves: 'focus' });
     expect(capped.picks).toEqual([{ exerciseId: 'standing-calf-raise', region: 'calves', fresh: false, replaced: 'seated-leg-curl' }]);
     expect(capped.exerciseIds).toHaveLength(5);
-    expect(capped.held).toBeUndefined();
+    // The calf raise has been done before, so it would take a set more too, but not past the usual length.
+    expect(capped.extra).toEqual([]);
+    expect(capped.held).toBe('time');
   });
 
   it('is the type’s usual minutes and 15 more, at the user’s own minutes a set', () => {

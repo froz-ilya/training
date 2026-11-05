@@ -62,6 +62,7 @@
   const HELD_KEYS = {
     week: 'coach.next.focus.heldWeek',
     turn: 'coach.next.focus.heldTurn',
+    ownDay: 'coach.next.focus.heldOwnDay',
     time: 'coach.next.focus.heldTime',
   } as const;
 

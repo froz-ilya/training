@@ -260,6 +260,21 @@ export function nextKey(keys: string[]): string | null {
   return choices.length ? mostFollowing(known, choices) : known[known.length - 1];
 }
 
+/**
+ * The types the rotation expects in the rest of the user's usual week after `key`: `next`, what it
+ * suggests once `key` is done, and then its usual order. Today's work counts in Focus's share for the
+ * next 6 days, which at the user's pace hold their other workouts of the week.
+ */
+function upcomingKeys(keys: string[], key: string, next: string | null, perWeek: number): string[] {
+  const order = [...keys, key];
+  const upcoming: string[] = [];
+  for (let type = next; type !== null && upcoming.length < perWeek - 1; type = nextKey(order)) {
+    upcoming.push(type);
+    order.push(type);
+  }
+  return upcoming;
+}
+
 /** The user's week, so the rotation can catch up with a type that has waited too long. */
 export interface RotationPace {
   today: string;
@@ -595,6 +610,17 @@ function planType(
     return counts ? Math.max(1, Math.round(median(counts))) : PLANNED_SETS;
   };
   const hasFocus = Object.values(active).includes('focus');
+  // When each type ahead comes: its last workout and then the rotation's usual wait at the user's pace,
+  // and never before the workouts ahead of it.
+  const typeGap = pace ? expectedGapDays(pace.perWeek, regularKeys(keys).length) : 0;
+  const lastOf = (type: string) => (type === key ? pace!.today : dates[keys.lastIndexOf(type)]);
+  const upcoming = pace
+    ? upcomingKeys(keys, key, afterKey, pace.perWeek).map((type, i) => ({
+        groups: typeGroups(type),
+        partners: partners[type] ?? [],
+        days: Math.max(i + 1, Math.round(typeGap - daysBetween(lastOf(type), pace.today))),
+      }))
+    : undefined;
   const share = pace && hasFocus ? focusWeek(workouts, exercises, active, pace.today, workoutTypes(workouts, exercises, pace.today)) : undefined;
   const focus = applyFocus(
     {
@@ -615,6 +641,7 @@ function planType(
       lastMain: pace ? lastMainWork(workouts, exercises) : undefined,
       nextGroups: afterKey === null ? undefined : typeGroups(afterKey),
       nextPartners: afterKey === null ? undefined : partners[afterKey],
+      upcoming,
       setsOf,
       week: share,
       maxSets: hasFocus ? maxWorkoutSets(usable, ofType.filter((w) => !w.combined)) : undefined,

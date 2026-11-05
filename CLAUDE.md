@@ -93,15 +93,21 @@ migration that is tested.
   steers the next workout (src/lib/coach/focus.ts): Focus adds one exercise per region while it's short
   for the week, at most two a workout, and only if the workout stays within a point of its usual
   difficulty. A pick swaps a filler that trains its other main muscle; otherwise the first goes on top
-  if that fits, and any other swaps a filler, or goes on top too when there's none. Medium and hard
-  picks go straight after the main lifts, light ones last. Chest, back and legs only join their own
-  day, so a Focus muscle among them that's still short may also get one light exercise mainly for it on
-  another type's day: one a workout, placed the same way. It waits two days
+  if that fits, and any other swaps a filler, or goes on top too when there's none. On the muscle's own
+  day a pick goes straight after the main lifts and any medium or hard pick before it, even a light
+  one. Other medium and hard picks go there too, and other light ones last. Chest, back and legs only
+  join their own day, so a Focus muscle among them that's still short may also get one light exercise
+  mainly for it on another type's day: one a workout, placed last. It waits two days
   after the muscle's last main work, and the day before its own day, going by the type the rotation
-  expects next. Light work for chest, back or legs on another type's day never makes that day's type,
+  expects next. Its own day's work comes first: when that day comes within 7 days (the rotation's types
+  for the rest of the usual week, each due at its last date plus its usual gap), the share it will have
+  then must keep a new exercise's sets after the light one, or the light one waits. Light work for chest, back or legs on another type's day never makes that day's type,
   a partner muscle or a group in its title, so it doesn't move the rotation. A muscle still short then gets a set more on
   exercises already planned for it, lightest first, one an exercise and four a workout, unless that
-  exercise's plan is easing off (pain, a break, a lighter week). Those sets are stored with
+  exercise's plan is easing off (pain, a break, a lighter week). Never on a hard exercise or a medium
+  main lift; a light exercise among the main lifts can take one. Only on what the user has done, so a
+  pick takes one from its second time, not its first. Light work on another day and a Sometimes
+  exercise keep their sets. With nothing that qualifies, the muscle waits. Those sets are stored with
   `extra: true`: the usual set count leaves them out, so turning Focus off goes straight back to it,
   while everything else counts them as work. All Focus adds in 7 days shares a fifth of the usual
   week's work sets (median of the last 4 weeks with workouts), at least 4. A set more on an exercise
@@ -118,8 +124,8 @@ migration that is tested.
   another day, its only other chance in the week, then small muscles (delts, arms, abs, calves), which
   can join any day. Within a tier the furthest short goes first. Chest, back and legs muscles also take
   turns: one that got nothing from Focus in 7 days goes first in its tier, and what it needs is kept
-  for it until its day comes. It's kept from its own tier and the ones after, never from a tier before
-  it. Small muscles don't jump the queue and nothing is kept for them: a missed day just means the
+  for it until its day comes, measured by the share that day will have when it's later in the week.
+  It's kept from its own tier and the ones after, never from a tier before it. Small muscles don't jump the queue and nothing is kept for them: a missed day just means the
   next one. A workout with Focus additions stays within its type's usual length plus 15 minutes, at the user's own minutes a set; with no timed workouts there's no limit. The next-workout
   card says when one of these held Focus back, and the goal picker says when more than three muscles
   share it.

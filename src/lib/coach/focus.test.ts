@@ -10,8 +10,8 @@ import type { BodyRegion, Exercise, RegionGoal, WorkoutSet } from '../types';
 import { typeTitle } from '../workout/title';
 import { loadNextWorkout } from './data';
 import { fitWeek, type MuscleBudget, type WeekPlan } from './budget';
-import { applyFocus, heldEnough, lastMainWork, trainsShortFocus, weekSets, type FocusPlan, type RegionSets } from './focus';
-import { planNextType, type RotationWorkout } from './next';
+import { applyFocus, focusWeek, heldEnough, lastMainWork, maxWorkoutSets, trainsShortFocus, weekSets, type FocusPlan, type FocusWeek, type RegionSets } from './focus';
+import { planNextType, workoutTypes, type RotationWorkout } from './next';
 
 const exercises = new Map<string, Exercise>(CATALOG.map((e) => [e.id, e]));
 type Goals = Partial<Record<BodyRegion, RegionGoal>>;
@@ -637,6 +637,284 @@ describe('trainsShortFocus', () => {
   });
 });
 
+describe('focusWeek', () => {
+  const chestFocus: Goals = { chest: 'focus' };
+  const read = (workouts: RotationWorkout[], goals: Goals = chestFocus) => focusWeek(workouts, exercises, goals, TODAY, workoutTypes(workouts, exercises, TODAY));
+  const withExtra = (workout: RotationWorkout, extra: Record<string, number>): RotationWorkout => ({
+    ...workout,
+    workSets: Object.fromEntries(Object.entries(workout.workSets).map(([id, sets]) => [id, sets + (extra[id] ?? 0)])),
+    extra,
+  });
+
+  it('gives Focus a fifth of the usual week, the median of the weeks with workouts', () => {
+    // 30 sets 7-13 days ago, none the week before, 50 three weeks ago: a usual week of 40.
+    const tens = Object.fromEntries(CHEST.map((id) => [id, 10]));
+    expect(read([on(21, CHEST, tens), on(10, CHEST), on(8, LEGS)]).budget).toBe(8);
+  });
+
+  it('starts a new user at a usual week of 40 sets, and never goes under four', () => {
+    expect(read([on(2, CHEST)]).budget).toBe(8);
+    expect(read([on(10, ['pec-deck']), on(17, ['pec-deck'])]).budget).toBe(4);
+  });
+
+  it('counts extra sets as they are, and an exercise new to the type', () => {
+    const history = [on(17, CHEST), on(10, CHEST)];
+    // Three sets of a new fly, and one extra set on the pec deck.
+    const thisWeek = withExtra(on(2, [...CHEST, 'dumbbell-fly']), { 'pec-deck': 1 });
+    expect(read([...history, thisWeek]).given.get('chest')).toBe(4);
+    // The usual week alone gave nothing.
+    expect(read([...history, on(2, CHEST)]).given.get('chest')).toBe(0);
+  });
+
+  it('counts nothing for the same type twice in 7 days with nothing added', () => {
+    const legs: Goals = { quads: 'focus', hamstrings: 'focus' };
+    const twice = read([on(20, LEGS), on(13, LEGS), on(6, LEGS), on(1, LEGS)], legs);
+    expect([...twice.given.values()]).toEqual([0, 0]);
+    expect([...twice.earlier.values()]).toEqual([0, 0]);
+    // Each day had 15 sets for chest: a usual week of 15 is over in two days.
+    expect(read([on(17, CHEST), on(10, CHEST), on(5, CHEST), on(2, CHEST)]).given.get('chest')).toBe(0);
+  });
+
+  it('counts extra sets exactly, on an exercise that has always been there', () => {
+    const history = [on(24, CHEST), on(17, CHEST), on(10, CHEST)];
+    const week = read([...history, withExtra(on(5, CHEST), { 'pec-deck': 1 }), withExtra(on(2, CHEST), { 'pec-deck': 1, 'cable-crossover': 1 })]);
+    expect(week.given.get('chest')).toBe(3);
+  });
+
+  it('counts an exercise new to its type, even one done on other days', () => {
+    const history = [on(24, CHEST), on(19, [...LEGS, 'dumbbell-fly']), on(17, CHEST), on(10, CHEST)];
+    expect(read([...history, on(2, [...CHEST, 'dumbbell-fly'])]).given.get('chest')).toBe(3);
+    // In a filler's place it's new all the same.
+    expect(read([...history, on(2, [...CHEST.slice(0, 4), 'dumbbell-fly'])]).given.get('chest')).toBe(3);
+  });
+
+  it('stops counting an exercise once the type has had it for a while', () => {
+    const fly = [...CHEST, 'dumbbell-fly'];
+    expect(read([on(30, CHEST), on(23, fly), on(16, fly), on(9, fly), on(2, fly)]).given.get('chest')).toBe(0);
+    // In a filler's place, from its second week.
+    const swapped = [...CHEST.slice(0, 4), 'dumbbell-fly'];
+    expect(read([on(23, CHEST), on(16, CHEST), on(9, swapped), on(2, swapped)]).given.get('chest')).toBe(0);
+  });
+
+  it('keeps counting a pick the plan doesn’t keep yet, which comes back on top each time', () => {
+    const fly = [...CHEST, 'dumbbell-fly'];
+    // In one of three chest days before, so the plan still has five exercises.
+    expect(read([on(23, CHEST), on(16, CHEST), on(9, fly), on(2, fly)]).given.get('chest')).toBe(3);
+    // A day of several types is longer anyway.
+    const combined = [on(23, CHEST), on(22, LEGS), on(16, CHEST), on(15, LEGS), on(9, fly), on(2, [...fly, ...LEGS])];
+    expect(read(combined).given.get('chest')).toBe(0);
+  });
+
+  it('always counts light work for chest, back or legs on another of them’s day', () => {
+    const chestDay = [...CHEST.slice(0, 4), 'lying-leg-curl'];
+    const week = read([on(23, chestDay), on(16, chestDay), on(9, chestDay), on(2, chestDay)], { hamstrings: 'focus' });
+    expect(week.given.get('hamstrings')).toBe(3);
+    expect(week.earlier.get('hamstrings')).toBe(3);
+    // On its own day it's that day's work.
+    expect(read([on(16, LEGS), on(9, LEGS), on(2, LEGS)], { hamstrings: 'focus' }).given.get('hamstrings')).toBe(0);
+  });
+
+  it('counts only the extra sets with nothing of the type to go by', () => {
+    const one = withExtra(on(2, [...CHEST, 'dumbbell-fly']), { 'pec-deck': 1 });
+    expect(read([one]).given.get('chest')).toBe(1);
+    expect(read([on(9, LEGS), one]).given.get('chest')).toBe(1);
+  });
+
+  it('keeps the week before apart, for taking turns', () => {
+    const history = [on(24, CHEST), on(17, CHEST), withExtra(on(10, CHEST), { 'pec-deck': 2 })];
+    const week = read(history);
+    expect(week.given.get('chest')).toBe(0);
+    expect(week.earlier.get('chest')).toBe(2);
+  });
+
+  it('reads only Focus muscles', () => {
+    expect([...read([on(2, CHEST)], { sideDelts: 'focus', chest: 'maintain' }).given.keys()]).toEqual(['sideDelts']);
+  });
+});
+
+describe('Focus’s share of the week', () => {
+  const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
+  /** Three sets more would bring chest into its range; nothing can join. */
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  const share = (budget: number, given: Partial<Record<BodyRegion, number>> = {}, earlier: Partial<Record<BodyRegion, number>> = {}): FocusWeek => ({
+    budget,
+    given: new Map(Object.entries(given) as [BodyRegion, number][]),
+    earlier: new Map(Object.entries(earlier) as [BodyRegion, number][]),
+  });
+  const fit = (base: FocusPlan, goals: Goals, sets: RegionSets = new Map()) => applyFocus(base, goals, sets, exercises);
+
+  it('stops adding once the week has had Focus’s share, and says so', () => {
+    expect(fit({ ...full, week: share(8) }, { chest: 'focus' })).toMatchObject({ extra: [{}, {}, {}] });
+    expect(fit({ ...full, week: share(8) }, { chest: 'focus' }).held).toBeUndefined();
+    const { extra, held } = fit({ ...full, week: share(8, { chest: 6 }) }, { chest: 'focus' });
+    expect(extra).toHaveLength(2);
+    expect(held).toBe('week');
+    expect(fit({ ...full, week: share(8, { chest: 8 }) }, { chest: 'focus' })).toMatchObject({ extra: [], held: 'week' });
+  });
+
+  it('counts a new exercise at its planned sets', () => {
+    const roomy = { ...full, max: 4, recent: [...PRESSES, 'cable-crossover'], setsOf: () => 4 };
+    expect(fit({ ...roomy, week: share(4) }, { chest: 'focus' }).picks.map((p) => p.exerciseId)).toEqual(['cable-crossover']);
+    const { picks, extra, held } = fit({ ...roomy, week: share(3) }, { chest: 'focus' });
+    expect(picks).toEqual([]);
+    expect(extra).toHaveLength(3);
+    expect(held).toBe('week');
+  });
+
+  it('says nothing when it held nothing back', () => {
+    expect(fit({ ...full, week: share(8, { chest: 8 }) }, { chest: 'focus' }, new Map([['chest', 3]])).held).toBeUndefined();
+    expect(fit({ ...full, week: share(0) }, {}).held).toBeUndefined();
+  });
+
+  describe('taking turns', () => {
+    /** One free slot, two Focus muscles that can use it. */
+    const legDay: FocusPlan = {
+      exerciseIds: ['barbell-squat', 'leg-press', 'lying-leg-curl'],
+      anchors: ['barbell-squat', 'leg-press', 'lying-leg-curl'],
+      groups: ['legs'],
+      partners: [],
+      leftOut: [],
+      max: 4,
+      recent: ['barbell-squat', 'leg-press', 'lying-leg-curl', 'leg-extension', 'seated-leg-curl'],
+      older: [],
+      usualPoints: 30,
+    };
+    const both: Goals = { quads: 'focus', hamstrings: 'focus' };
+    const week: RegionSets = new Map([['hamstrings', 3]]);
+    const slot = (base: FocusPlan) => fit(base, both, week).picks.map((p) => [p.exerciseId, p.region]);
+
+    it('gives the slot to the muscle furthest short when both got the same', () => {
+      expect(slot(legDay)).toEqual([['leg-extension', 'quads']]);
+      expect(slot({ ...legDay, week: share(20) })).toEqual([['leg-extension', 'quads']]);
+    });
+
+    it('gives it to the one that got nothing from Focus over the last 7 days', () => {
+      expect(slot({ ...legDay, week: share(20, { quads: 3 }) })).toEqual([['seated-leg-curl', 'hamstrings']]);
+    });
+
+    it('of two that both waited, to the one that got less the week before', () => {
+      expect(slot({ ...legDay, week: share(20, {}, { quads: 4 }) })).toEqual([['seated-leg-curl', 'hamstrings']]);
+    });
+
+    it('keeps a new exercise’s sets for the muscle first in line when today can’t serve it', () => {
+      // Hamstrings waited, but can't join a chest day without today's date for light work.
+      const { picks, extra, held } = fit({ ...full, max: 4, recent: [...PRESSES, 'cable-crossover'], week: share(6, { chest: 1 }) }, { chest: 'focus', hamstrings: 'focus' });
+      expect(picks).toEqual([]);
+      expect(extra).toHaveLength(2);
+      expect(held).toBe('turn');
+    });
+
+    it('lets nobody else take the room while the muscle first in line is waiting for it', () => {
+      const roomy = { ...full, max: 4, recent: [...PRESSES, 'lateral-raise'] };
+      expect(fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus' }).extra).toHaveLength(2);
+      const { picks, extra, held } = fit({ ...roomy, week: share(8, { chest: 6 }) }, { chest: 'focus', sideDelts: 'focus' });
+      expect(picks).toEqual([]);
+      expect(extra).toEqual([]);
+      expect(held).toBe('week');
+    });
+  });
+});
+
+describe('a workout’s usual length', () => {
+  const PRESSES = ['barbell-bench-press', 'incline-dumbbell-press', 'pec-deck'];
+  const full: FocusPlan = { exerciseIds: PRESSES, anchors: PRESSES, groups: ['chest'], partners: [], leftOut: [], max: 3, recent: PRESSES, older: [], usualPoints: 30 };
+  const fit = (base: FocusPlan, goals: Goals) => applyFocus(base, goals, new Map(), exercises);
+  const timed = (daysAgo: number, ids: string[], minutes: number, sets?: Record<string, number>): RotationWorkout => ({ ...on(daysAgo, ids, sets), minutes });
+
+  it('stops additions where the workout would run past it', () => {
+    expect(fit({ ...full, maxSets: 10 }, { chest: 'focus' })).toMatchObject({ extra: [{ exerciseId: 'pec-deck' }], held: 'time' });
+    expect(fit({ ...full, maxSets: 12 }, { chest: 'focus' }).held).toBeUndefined();
+  });
+
+  it('still lets a pick take a filler’s place, which keeps the workout as long as it was', () => {
+    const LEGS5: FocusPlan = { ...full, exerciseIds: LEGS, anchors: LEGS.slice(0, 3), groups: ['legs'], max: 6, recent: [...LEGS, 'standing-calf-raise'], usualPoints: 8 };
+    expect(fit(LEGS5, { calves: 'focus' }).picks).toEqual([{ exerciseId: 'standing-calf-raise', region: 'calves', fresh: false }]);
+    const capped = fit({ ...LEGS5, maxSets: 15 }, { calves: 'focus' });
+    expect(capped.picks).toEqual([{ exerciseId: 'standing-calf-raise', region: 'calves', fresh: false, replaced: 'seated-leg-curl' }]);
+    expect(capped.exerciseIds).toHaveLength(5);
+    expect(capped.held).toBeUndefined();
+  });
+
+  it('is the type’s usual minutes and 15 more, at the user’s own minutes a set', () => {
+    // 45, 50 and 60 minutes for 15 sets: 50 usual, at 3⅓ minutes a set.
+    const ofType = [timed(14, CHEST, 45), timed(7, CHEST, 60), timed(1, CHEST, 50)];
+    expect(maxWorkoutSets(ofType, ofType)).toBe(19);
+  });
+
+  it('leaves out a workout over 5 hours, which was left open', () => {
+    const ofType = [timed(14, CHEST, 45), timed(7, CHEST, 400), timed(1, CHEST, 45)];
+    expect(maxWorkoutSets(ofType, ofType)).toBe(20);
+  });
+
+  it('takes 3 minutes a set when no timed workout has work sets', () => {
+    const empty = [timed(7, CHEST, 45, Object.fromEntries(CHEST.map((id) => [id, 0])))];
+    expect(maxWorkoutSets(empty, empty)).toBe(20);
+  });
+
+  it('is unknown without timed workouts of the type, and then there’s no limit', () => {
+    expect(maxWorkoutSets([timed(7, LEGS, 45), on(2, CHEST)], [on(2, CHEST)])).toBeUndefined();
+  });
+
+  describe('in the plan', () => {
+    const history = alternating(CHEST, [...LEGS.slice(0, 4), 'lateral-raise']);
+    /** A slow 6 minutes a set: 15 more minutes is two sets, too few for a new exercise on top. */
+    const slow = history.map((w) => ({ ...w, minutes: 90 }));
+
+    it('swaps a filler instead of going on top', () => {
+      expect(plan(history, { sideDelts: 'focus' }).focus).toEqual([{ exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false }]);
+      const { exerciseIds, focus } = plan(slow, { sideDelts: 'focus' });
+      expect(focus).toEqual([{ exerciseId: 'lateral-raise', region: 'sideDelts', fresh: false, replaced: 'cable-crossover' }]);
+      expect(exerciseIds).toHaveLength(5);
+    });
+
+    it('changes nothing without goals', () => {
+      expect(plan(slow)).toEqual(plan(history));
+    });
+  });
+});
+
+describe('Focus held back in the plan', () => {
+  /** Chest days and leg days with a lateral raise; the last leg day was 3 days ago. */
+  const days = (lastLegDay: (w: RotationWorkout) => RotationWorkout) =>
+    [16, 14, 12, 10, 8, 3].map((daysAgo, i) => {
+      const w = on(daysAgo, i % 2 ? [...LEGS.slice(0, 4), 'lateral-raise'] : CHEST);
+      return i === 5 ? lastLegDay(w) : w;
+    });
+
+  it('says so when the week has had Focus’s share', () => {
+    // Seven extra sets for the lateral raise 3 days ago, of a share of 8.
+    const used = days((w) => ({ ...w, workSets: { ...w.workSets, 'lateral-raise': 8 }, extra: { 'lateral-raise': 7 } }));
+    const next = plan(used, { sideDelts: 'focus' });
+    expect(next.key).toBe('chest');
+    expect(next.focus).toEqual([]);
+    expect(next.focusHeld).toBe('week');
+  });
+
+  it('says nothing when it held nothing back, or without goals', () => {
+    const next = plan(days((w) => w), { sideDelts: 'focus' });
+    expect(next.focus).toHaveLength(1);
+    expect(next.focusHeld).toBeUndefined();
+    expect(plan(days((w) => w)).focusHeld).toBeUndefined();
+  });
+});
+
+describe('Focus’s share with a type trained twice in 7 days', () => {
+  /** Chest, legs and back every other day with nothing added: legs 6 days ago, back 4, chest 2. */
+  const history = [26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2].map((daysAgo, i) => on(daysAgo, [CHEST, LEGS, BACK][i % 3]));
+  const five: Goals = { chest: 'focus', quads: 'focus', hamstrings: 'focus', sideDelts: 'focus', biceps: 'focus' };
+
+  it('finds nothing given, so Focus adds and says nothing held', () => {
+    const share = focusWeek(history, exercises, five, TODAY, workoutTypes(history, exercises, TODAY));
+    expect([...share.given.values()].every((sets) => sets === 0)).toBe(true);
+    for (const type of ['legs', 'chest']) {
+      const next = plan(history, five, { type });
+      expect(next.key).toBe(type);
+      expect(next.focus.length + next.extraSets.length, type).toBeGreaterThan(0);
+      expect(next.focusHeld, type).toBeUndefined();
+    }
+  });
+});
+
 describe('the Today card', () => {
   afterEach(() => {
     settings.regionGoals = {};
@@ -667,5 +945,31 @@ describe('the Today card', () => {
     expect(work.at(-1)! / work.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(0.2);
     expect(next.groups).toEqual(['chest', 'shoulders']);
     expect(typeTitle(next.groups, next.partners)).toBe(typeTitle(['chest'], ['shoulders', 'triceps']));
+  });
+
+  it('reads how long workouts took, and says when that kept Focus out', async () => {
+    await db.delete();
+    await db.open();
+    const now = new Date();
+    const ago = (days: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 18);
+    const chest = ['barbell-bench-press', 'incline-dumbbell-press', 'lateral-raise', 'rope-pushdown'];
+    const order = [chest, BACK, LEGS];
+    let n = 0;
+    for (const [i, daysAgo] of [20, 18, 16, 14, 12, 10, 8, 6, 4].entries()) {
+      const id = `w${i}`;
+      const date = toISODate(ago(daysAgo));
+      const ids = order[i % 3];
+      // A slow 6 minutes a set, rest included: 15 minutes more is two sets.
+      const startedAt = ago(daysAgo).getTime();
+      await db.workouts.add({ id, date, status: 'done', source: 'app', updatedAt: 1, startedAt, finishedAt: startedAt + ids.length * 3 * 6 * 60000 });
+      const sets = ids.flatMap((exerciseId, entry) =>
+        [1, 2, 3].map((o): WorkoutSet => ({ id: `s${n++}`, workoutId: id, exerciseId, date, entry: entry + 1, order: o, kind: 'work', weightKg: 40, reps: 8, done: true })),
+      );
+      await db.sets.bulkAdd(sets);
+    }
+    settings.regionGoals = { hamstrings: 'focus' };
+    const next = (await loadNextWorkout())!;
+    expect(next.focus).toEqual([]);
+    expect(next.focusHeld).toBe('time');
   });
 });

@@ -1,5 +1,5 @@
 import { CATALOG, catalogExercise } from '../catalog/exercises';
-import { groupOf, mainGroups, type MuscleGroup } from '../catalog/groups';
+import { groupOf, mainGroups, namingSets, type MuscleGroup } from '../catalog/groups';
 import { combinedWork, regionsOf, type RegionWork } from '../catalog/regions';
 import { daysBetween, toISODate } from '../dates';
 import { effectiveHistory, lastPerformance } from '../db/repo';
@@ -13,6 +13,7 @@ import type { Baseline, BodyRegion, Exercise, ExerciseNote, ExerciseSettings, Mu
 import { bodyLoad, keptTrainingUntil, type BodyLoad } from './balance';
 import { compareExercise, pairSets, type ExerciseComparison } from './compare';
 import { priorWork, type WorkoutRow } from './fatigue';
+import type { FocusHeld } from './focus';
 import { expectedGapDays, weekProgress, weeklyFrequency, type WeekProgress } from './frequency';
 import { planNextType, rotationTypeCount, typeGroups, type NextPick, type RotationWorkout, type TypeReason, type VariantReason } from './next';
 import { alternateRange, lighterWeekActive, resolveOutcomes } from './plateau';
@@ -167,9 +168,9 @@ async function readStored(): Promise<Stored> {
 }
 
 /** Only sets from finished workouts count, and only the ones actually done. */
-async function finishedSets(): Promise<{ sets: WorkoutSet[]; workouts: Map<string, { date: string }> }> {
+async function finishedSets(): Promise<{ sets: WorkoutSet[]; workouts: Map<string, { date: string; minutes?: number }> }> {
   const finished = await db.workouts.where('status').equals('done').toArray();
-  const workouts = new Map(finished.map((w) => [w.id, { date: w.date }]));
+  const workouts = new Map(finished.map((w) => [w.id, { date: w.date, minutes: workoutMinutes(w) ?? undefined }]));
   const all = await db.sets.toArray();
   return { sets: await effectiveHistory(all.filter((s) => s.done && workouts.has(s.workoutId))), workouts };
 }
@@ -202,14 +203,20 @@ export async function sometimesExercises(): Promise<Exercise[]> {
 }
 
 /** Finished workouts in date order, as the rotation sees them. */
-function toRotation(sets: WorkoutSet[], workouts: Map<string, { date: string }>): RotationWorkout[] {
+function toRotation(sets: WorkoutSet[], workouts: Map<string, { date: string; minutes?: number }>): RotationWorkout[] {
   const perWorkout = group(sets, (s) => s.workoutId);
   const rotation: RotationWorkout[] = [];
   for (const [id, workout] of workouts) {
     const rows = (perWorkout.get(id) ?? []).sort((a, b) => a.entry - b.entry);
     const workSets: Record<string, number> = {};
-    for (const row of rows) if (row.kind === 'work') workSets[row.exerciseId] = (workSets[row.exerciseId] ?? 0) + 1;
-    rotation.push({ id, date: workout.date, exerciseIds: [...new Set(rows.map((s) => s.exerciseId))], workSets });
+    const extra: Record<string, number> = {};
+    for (const row of rows) {
+      if (row.kind !== 'work') continue;
+      workSets[row.exerciseId] = (workSets[row.exerciseId] ?? 0) + 1;
+      if (row.extra) extra[row.exerciseId] = (extra[row.exerciseId] ?? 0) + 1;
+    }
+    const exerciseIds = [...new Set(rows.map((s) => s.exerciseId))];
+    rotation.push({ id, date: workout.date, exerciseIds, workSets, extra, ...(workout.minutes !== undefined && { minutes: workout.minutes }) });
   }
   return rotation.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -510,6 +517,8 @@ export interface NextWorkout {
   focus: { exercise: Exercise; region: BodyRegion; fresh: boolean; replaced?: Exercise; overlap?: BodyRegion; otherDay?: true }[];
   /** Exercises with a set more for a Focus muscle, in plan order. */
   extraSets: { exercise: Exercise; region: BodyRegion }[];
+  /** Focus would have added more today, but for its share of the week, another muscle's turn or the workout's length. */
+  focusHeld?: FocusHeld;
   /** Exercises planned in place of ones the user doesn't want suggested. */
   standIns: { exercise: Exercise; instead: Exercise; fresh: boolean }[];
   /** The exercise marked Sometimes that's in because it's due, when it was last done and what it replaced. */
@@ -563,7 +572,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
     list.push({ exercise, sets, suggestion: view.suggestion });
     planned.push(...sets.map((set) => ({ ...set, exerciseId: id, entry: position })));
   }
-  const groups = mainGroups(list.map((e) => ({ exercise: e.exercise, sets: e.sets.filter((s) => s.kind === 'work').length })));
+  const groups = mainGroups(list.map((e) => ({ exercise: e.exercise, sets: namingSets(e.sets) })));
   const dates = [...workouts.values()].map((w) => w.date);
   const reason = plan.reason && { kind: plan.reason.kind, after: exercises.get(plan.reason.after)!, lead: exercises.get(plan.reason.lead)! };
   const otherVariants = plan.otherLeads.map((id) => exercises.get(id)!);
@@ -581,7 +590,7 @@ export async function loadNextWorkout(pick?: NextPick): Promise<NextWorkout | nu
   const standIns = plan.standIns.map(({ exerciseId, instead, fresh }) => ({ exercise: exercises.get(exerciseId)!, instead: exercises.get(instead)!, fresh }));
   const back = plan.sometimes;
   const sometimes = back && { exercise: exercises.get(back.exerciseId)!, last: back.last, replaced: back.replaced ? exercises.get(back.replaced) : undefined };
-  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, extraSets, standIns, sometimes };
+  return { groups, partners, exercises: list, week: weekProgress(dates, today, perWeek), typeReason, otherTypes: plan.otherTypes.map(typeName), reason, otherVariants, leftOut: plan.leftOut.map((id) => exercises.get(id)!), added: plan.added, focus, extraSets, focusHeld: plan.focusHeld, standIns, sometimes };
 }
 
 // ---------- Saving ----------

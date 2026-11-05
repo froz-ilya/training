@@ -1,4 +1,4 @@
-import { groupOf, type GroupWork, type MuscleGroup } from '../catalog/groups';
+import { groupOf, namingSets, type GroupWork, type MuscleGroup } from '../catalog/groups';
 import { i18n, locale, t } from '../i18n.svelte';
 import type { Exercise, Muscle, WorkoutSet } from '../types';
 
@@ -7,14 +7,17 @@ import type { Exercise, Muscle, WorkoutSet } from '../types';
  * is stored: this is worked out from its exercises whenever it's shown.
  */
 
-/** One workout's exercises, as mainGroups() reads them. Exercises that no longer exist are left out. */
-export function groupWork(sets: Pick<WorkoutSet, 'exerciseId' | 'entry' | 'kind'>[], exercises: Map<string, Exercise>): GroupWork[] {
+/**
+ * One workout's exercises, as mainGroups() reads them. Exercises that no longer exist are left out, and
+ * so are Focus's extra sets (namingSets()).
+ */
+export function groupWork(sets: Pick<WorkoutSet, 'exerciseId' | 'entry' | 'kind' | 'extra'>[], exercises: Map<string, Exercise>): GroupWork[] {
   const work = new Map<number, GroupWork>();
   for (const set of sets) {
     const exercise = exercises.get(set.exerciseId);
     if (!exercise) continue;
     const entry = work.get(set.entry) ?? { exercise, sets: 0 };
-    if (set.kind === 'work') entry.sets += 1;
+    entry.sets += namingSets([set]);
     work.set(set.entry, entry);
   }
   return [...work.values()];

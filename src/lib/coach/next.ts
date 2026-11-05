@@ -4,10 +4,11 @@ import { daysBetween } from '../dates';
 import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
 import { fitWeek, muscleBudgets, SMALL, workedExercises } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
-import { applyFocus, heldEnough, lastMainWork, trainsShortFocus, weekSets } from './focus';
+import { applyFocus, FOCUS_HISTORY_DAYS, focusWeek, heldEnough, lastMainWork, maxWorkoutSets, PLANNED_SETS, trainsShortFocus, weekSets, type FocusHeld } from './focus';
 import { expectedGapDays } from './frequency';
 import { median } from './position';
 import { sometimesState, type SometimesPick } from './sometimes';
+import { USUAL_SETS_SESSIONS } from './suggest';
 import { replaceAvoided, type StandIn } from './standIn';
 
 /** A finished workout, newest last, as the rotation sees it. */
@@ -17,6 +18,10 @@ export interface RotationWorkout {
   exerciseIds: string[];
   /** Work sets per exercise. */
   workSets: Record<string, number>;
+  /** Of those, the sets Focus added on top of the usual ones. */
+  extra?: Record<string, number>;
+  /** Start to finish, when that's known and the workout wasn't left open. */
+  minutes?: number;
 }
 
 /** Why this type. `types` is what to show, in order: what was just done, then this one. */
@@ -70,6 +75,8 @@ export interface PlannedType {
   focus: FocusPick[];
   /** Exercises that get a set more than usual, at most one each. */
   extraSets: FocusExtra[];
+  /** Focus would have added more today, but for its share of the week or the workout's usual length. */
+  focusHeld?: FocusHeld;
   /** Exercises in the plan that take the place of an avoided one. */
   standIns: StandIn[];
   /** The exercise marked Sometimes that's in the plan because it's due. */
@@ -123,7 +130,8 @@ function exerciseGroup(id: string, exercises: Map<string, Exercise>): MuscleGrou
 function workoutGroups(workout: RotationWorkout, exercises: Map<string, Exercise>): MuscleGroup[] {
   const known = workout.exerciseIds.flatMap((id) => {
     const exercise = exercises.get(id);
-    return exercise ? [{ exercise, sets: Math.max(1, workout.workSets[id] ?? 0) }] : [];
+    // Focus's extra sets are left out, as the title leaves them out.
+    return exercise ? [{ exercise, sets: Math.max(1, (workout.workSets[id] ?? 0) - (workout.extra?.[id] ?? 0)) }] : [];
   });
   // A leg curl on a chest day isn't a leg day: the same reading as the workout's title.
   const done = dayWork(known);
@@ -185,6 +193,17 @@ function rotationOrder(workouts: RotationWorkout[], types: string[][]): { keys: 
     }
   });
   return { keys, dates };
+}
+
+/**
+ * The rotation types of the workouts focusWeek() reads, as the rotation reads them today. The habit
+ * that joins two groups into one type comes from the latest workouts, so it's the same as the plan's.
+ */
+export function workoutTypes(workouts: RotationWorkout[], exercises: Map<string, Exercise>, today: string): (workout: RotationWorkout) => readonly string[] {
+  const recent = workouts.filter((w) => w.exerciseIds.some((id) => exercises.has(id)) && daysBetween(w.date, today) < FOCUS_HISTORY_DAYS);
+  const types = dayTypes(recent, exercises);
+  const byId = new Map(recent.map((workout, i) => [workout.id, types[i]]));
+  return (workout) => byId.get(workout.id) ?? [];
 }
 
 /** The rotation's keys: one per type a workout counts as, or '' with no known exercises. */
@@ -563,6 +582,20 @@ function planType(
   const recent = doneExercises(usable, exercises);
   // What the rotation would suggest once this workout is done, so a muscle isn't worked the day before its own.
   const afterKey = pace ? overdueKey([...keys, key], [...dates, pace.today], pace) : nextKey([...keys, key]);
+  // An exercise is planned with its usual sets, as its suggestion counts them: Focus's extra sets left out.
+  const setCounts = new Map<string, number[]>();
+  for (const workout of usable) {
+    for (const [id, sets] of Object.entries(workout.workSets)) {
+      const usual = sets - (workout.extra?.[id] ?? 0);
+      if (usual > 0) setCounts.set(id, [...(setCounts.get(id) ?? []), usual]);
+    }
+  }
+  const setsOf = (id: string) => {
+    const counts = setCounts.get(id)?.slice(-USUAL_SETS_SESSIONS);
+    return counts ? Math.max(1, Math.round(median(counts))) : PLANNED_SETS;
+  };
+  const hasFocus = Object.values(active).includes('focus');
+  const share = pace && hasFocus ? focusWeek(workouts, exercises, active, pace.today, workoutTypes(workouts, exercises, pace.today)) : undefined;
   const focus = applyFocus(
     {
       exerciseIds: fit.exerciseIds,
@@ -582,6 +615,9 @@ function planType(
       lastMain: pace ? lastMainWork(workouts, exercises) : undefined,
       nextGroups: afterKey === null ? undefined : typeGroups(afterKey),
       nextPartners: afterKey === null ? undefined : partners[afterKey],
+      setsOf,
+      week: share,
+      maxSets: hasFocus ? maxWorkoutSets(usable, ofType.filter((w) => !w.combined)) : undefined,
     },
     active,
     week,
@@ -608,6 +644,7 @@ function planType(
     added: fit.added.filter((muscle) => focus.exerciseIds.some((id) => exercises.get(id)?.muscle === muscle)),
     focus: focus.picks.map(({ replaced, overlap, ...focusPick }) => (replaced && !isNew(replaced) ? { ...focusPick, replaced, overlap } : focusPick)),
     extraSets: focus.extra,
+    ...(focus.held && { focusHeld: focus.held }),
     standIns: inPlan,
     sometimes: back?.replaced && isNew(back.replaced) ? { exerciseId: back.exerciseId, last: back.last } : back,
     partners,

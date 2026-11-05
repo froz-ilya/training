@@ -1,5 +1,5 @@
 import { difficultyOf, difficultyPoints } from '../catalog/difficulty';
-import { groupOf, type MuscleGroup } from '../catalog/groups';
+import { dayWork, groupOf, type MuscleGroup } from '../catalog/groups';
 import { BODY_REGIONS, regionsOf } from '../catalog/regions';
 import { daysBetween } from '../dates';
 import type { BodyRegion, Exercise, Muscle, RegionGoal } from '../types';
@@ -7,6 +7,7 @@ import { regionRange } from './balance';
 import { SMALL } from './budget';
 import { HELPER_WEIGHT } from './fatigue';
 import type { FocusExtra, FocusPick, RotationWorkout } from './next';
+import { median } from './position';
 import type { SometimesPick } from './sometimes';
 
 /**
@@ -23,7 +24,7 @@ export type RegionSets = Map<BodyRegion, number>;
 
 const DAYS_IN_WEEK = 7;
 /** What an exercise in the plan is taken to add, before its sets are suggested. */
-const PLANNED_SETS = 3;
+export const PLANNED_SETS = 3;
 /** A workout stays the user's own: the accent is a part of it. */
 const MAX_FOCUS = 2;
 /** A starting value: a Focus exercise may make a workout a little harder than usual, not a lot. */
@@ -34,6 +35,31 @@ const MAX_EXTRA_SETS = 4;
 const ANY_DAY: readonly Muscle[] = ['shoulders', ...SMALL];
 /** Days a muscle rests after its main work before light work on another day. */
 const REST_DAYS = 2;
+/**
+ * A starting value: the share of a usual week's work sets that Focus may add over 7 days, so even many
+ * Focus muscles don't make the week much bigger than the user is used to.
+ */
+const FOCUS_SHARE = 0.2;
+/** A starting value: the least Focus may add over 7 days, an exercise and a set, so a small week still gets some. */
+const MIN_FOCUS_SETS = 4;
+/** A starting value for a usual week with too little history to go by: three workouts of four or five exercises. */
+const DEFAULT_WEEK_SETS = 40;
+/** The last weeks with workouts that set the usual week. */
+const USUAL_WEEKS = 4;
+/** With fewer of those weeks, there's no usual week to go by. */
+const MIN_USUAL_WEEKS = 2;
+/** A starting value: how much longer than usual a workout with Focus additions may get. */
+const EXTRA_MINUTES = 15;
+/** A starting value for a work set with its rest, when no workout says how long the user takes. */
+const DEFAULT_MINUTES_PER_SET = 3;
+/** Longer than this, the workout was most likely left open, as workoutMinutes() reads it. */
+const LEFT_OPEN_MINUTES = 5 * 60;
+/** Recent timed workouts that set the minutes a work set takes. */
+const TIMED_WORKOUTS = 30;
+/** Workouts of the type that set its usual length. */
+const TYPE_WORKOUTS = 10;
+/** More Focus muscles than this share out the extra work, so each gets it less often. */
+export const MANY_FOCUS = 3;
 
 const setsOf = (week: RegionSets, region: BodyRegion) => week.get(region) ?? 0;
 
@@ -79,6 +105,146 @@ export function trainsShortFocus(exercise: Exercise, goals: RegionGoals, week: R
   return regionsOf(exercise).main.some((region) => goals[region] === 'focus' && setsOf(week, region) < regionRange(region, 'focus').low);
 }
 
+/** What Focus has given lately, and what it may give. */
+export interface FocusWeek {
+  /** Work sets Focus may add over 7 days. */
+  budget: number;
+  /** What it gave each Focus muscle over the last 7 days. Today's plan isn't in it. */
+  given: Map<BodyRegion, number>;
+  /** What it gave each of them in the 7 days before that, so the one that waited longest goes first. */
+  earlier: Map<BodyRegion, number>;
+}
+
+/**
+ * Weeks before a counted week that say what a type already had. Long enough for the plan's own
+ * rotation of fillers to come round, so a filler coming back isn't taken for Focus's work.
+ */
+const USUAL_FOR_TYPE_WEEKS = 8;
+/** Done in fewer than this share of a type's workouts, an exercise isn't settled in the type yet. */
+const UNSETTLED_SHARE = 1 / 2;
+/** The days of history focusWeek reads exercises from: the two weeks it counts and the weeks before them. */
+export const FOCUS_HISTORY_DAYS = (2 + USUAL_FOR_TYPE_WEEKS) * DAYS_IN_WEEK;
+
+/**
+ * Focus's share of the week, read from history alone, and only from what Focus can be shown to have
+ * added. Plain work never counts, however often a type is trained, and neither does today's plan.
+ *  - Sets Focus added to planned exercises are stored as `extra`, so they count as they are.
+ *  - Light work for chest, back or legs on another of them's day (dayWork()) always counts: that's
+ *    what Focus brings in on another day.
+ *  - An exercise Focus brought in is stored as any other, so its sets count while it's new to its
+ *    workout's type: none of that type's workouts in the USUAL_FOR_TYPE_WEEKS before the counted week
+ *    had it. Once it's been done there more than 7 days ago it's part of the type.
+ *  - The plan keeps the type's usual number of exercises, so a pick it doesn't keep yet comes back on
+ *    top each time. A workout past that number counts what's over it, taking the exercises the type
+ *    has had least, while they're in fewer than half of the type's workouts in those weeks. A combined
+ *    day is longer anyway, so it doesn't count this way.
+ * With no workout of the type in those weeks there's nothing to go by, so only the first two count.
+ * `typesOf` gives a workout's rotation types (see workoutTypes() in next.ts).
+ *
+ * The share is a fifth of the usual week: the median of the last weeks with workouts, counted back
+ * from today as the rotation counts them, with the last 7 days left out. With too little history,
+ * DEFAULT_WEEK_SETS.
+ */
+export function focusWeek(
+  workouts: RotationWorkout[],
+  exercises: Map<string, Exercise>,
+  goals: RegionGoals,
+  today: string,
+  typesOf: (workout: RotationWorkout) => readonly string[],
+): FocusWeek {
+  const totals = new Map<number, number>();
+  for (const workout of workouts) {
+    const daysAgo = daysBetween(workout.date, today);
+    if (daysAgo < 0) continue;
+    const index = Math.floor(daysAgo / DAYS_IN_WEEK);
+    for (const [id, sets] of Object.entries(workout.workSets)) {
+      if (!exercises.has(id)) continue;
+      totals.set(index, (totals.get(index) ?? 0) + sets - Math.min(sets, workout.extra?.[id] ?? 0));
+    }
+  }
+  const trained = [...totals.keys()].filter((index) => index > 0 && totals.get(index)! > 0).sort((a, b) => a - b).slice(0, USUAL_WEEKS);
+  const usualWeek = trained.length >= MIN_USUAL_WEEKS ? median(trained.map((index) => totals.get(index)!)) : DEFAULT_WEEK_SETS;
+
+  const within = (workout: RotationWorkout, from: number, days: number) => {
+    const daysAgo = daysBetween(workout.date, today);
+    return daysAgo >= from && daysAgo < from + days;
+  };
+  /** The exercises a workout worked: those that say what the day was, and light work for another's day. */
+  const parts = (workout: RotationWorkout) => {
+    const ids = workout.exerciseIds.filter((id) => exercises.has(id) && workout.workSets[id] > 0);
+    const day = new Set(dayWork(ids.map((id) => ({ id, exercise: exercises.get(id)! }))).map((work) => work.id));
+    return { own: ids.filter((id) => day.has(id)), otherDay: ids.filter((id) => !day.has(id)) };
+  };
+  /** What Focus gave each region in the week `index` weeks back. */
+  const gaveIn = (index: number) => {
+    const gave = new Map<BodyRegion, number>();
+    const give = (id: string, sets: number) => {
+      if (sets > 0) for (const region of regionsOf(exercises.get(id)!).main) gave.set(region, (gave.get(region) ?? 0) + sets);
+    };
+    const from = index * DAYS_IN_WEEK;
+    const before = workouts.filter((workout) => within(workout, from + DAYS_IN_WEEK, USUAL_FOR_TYPE_WEEKS * DAYS_IN_WEEK));
+    for (const workout of workouts.filter((w) => within(w, from, DAYS_IN_WEEK))) {
+      const added = (id: string) => Math.min(workout.workSets[id], workout.extra?.[id] ?? 0);
+      const usual = (id: string) => workout.workSets[id] - added(id);
+      const { own, otherDay } = parts(workout);
+      for (const id of [...own, ...otherDay]) give(id, added(id));
+      for (const id of otherDay) give(id, usual(id));
+      const types = typesOf(workout);
+      const sameType = before.filter((other) => typesOf(other).some((type) => types.includes(type)));
+      // With nothing of the type to go by, nothing is new.
+      if (!sameType.length) continue;
+      const shareOf = (id: string) => sameType.filter((other) => other.workSets[id] > 0).length / sameType.length;
+      const fresh = own.filter((id) => shareOf(id) === 0);
+      for (const id of fresh) give(id, usual(id));
+      // An exercise the plan doesn't keep yet comes back on top, past the type's usual number of exercises.
+      const single = sameType.filter((other) => typesOf(other).length === 1);
+      if (types.length !== 1 || !single.length) continue;
+      const usualSize = Math.ceil(median(single.map((other) => parts(other).own.length)));
+      const over = own.length - usualSize - fresh.length;
+      if (over <= 0) continue;
+      own
+        .filter((id) => !fresh.includes(id) && shareOf(id) < UNSETTLED_SHARE)
+        .sort((a, b) => shareOf(a) - shareOf(b) || own.indexOf(b) - own.indexOf(a))
+        .slice(0, over)
+        .forEach((id) => give(id, usual(id)));
+    }
+    return gave;
+  };
+  const focus = BODY_REGIONS.filter((region) => goals[region] === 'focus');
+  const [thisWeek, weekBefore] = [gaveIn(0), gaveIn(1)];
+  return {
+    budget: Math.max(MIN_FOCUS_SETS, Math.round(FOCUS_SHARE * usualWeek)),
+    given: new Map(focus.map((region) => [region, thisWeek.get(region) ?? 0])),
+    earlier: new Map(focus.map((region) => [region, weekBefore.get(region) ?? 0])),
+  };
+}
+
+/** What's left of Focus's share of the week. */
+function focusRoom({ budget, given }: FocusWeek): number {
+  return Math.max(0, budget - [...given.values()].reduce((sum, sets) => sum + sets, 0));
+}
+
+/**
+ * The most work sets a workout of this type may come to with Focus additions: its usual length and
+ * EXTRA_MINUTES more, at the minutes a work set takes this user, rest included. Both are medians of
+ * the user's own timed workouts, leaving out any left open. Unknown with no timed workout of the type,
+ * and then there's no limit.
+ */
+export function maxWorkoutSets(recent: RotationWorkout[], ofType: RotationWorkout[]): number | undefined {
+  const timed = (workout: RotationWorkout) => workout.minutes !== undefined && workout.minutes > 0 && workout.minutes <= LEFT_OPEN_MINUTES;
+  const typeMinutes = ofType.filter(timed).slice(-TYPE_WORKOUTS).map((workout) => workout.minutes!);
+  if (!typeMinutes.length) return undefined;
+  const perSet = recent
+    .filter(timed)
+    .slice(-TIMED_WORKOUTS)
+    .flatMap((workout) => {
+      const sets = Object.values(workout.workSets).reduce((sum, n) => sum + n, 0);
+      return sets > 0 ? [workout.minutes! / sets] : [];
+    });
+  const minutes = perSet.length ? median(perSet) : DEFAULT_MINUTES_PER_SET;
+  return Math.floor((median(typeMinutes) + EXTRA_MINUTES) / minutes);
+}
+
 export interface FocusPlan {
   /** The plan once it fits the week. */
   exerciseIds: string[];
@@ -114,7 +280,19 @@ export interface FocusPlan {
   nextGroups?: MuscleGroup[];
   /** The partner muscles of that type. */
   nextPartners?: Muscle[];
+  /** Work sets an exercise is planned with. Without it, PLANNED_SETS. */
+  setsOf?: (id: string) => number;
+  /** Focus's share of the week, and what it has given: see focusWeek. Without it, no limit and no turns. */
+  week?: FocusWeek;
+  /** The most work sets the workout may come to with Focus additions. Without it, no limit. */
+  maxSets?: number;
 }
+
+/**
+ * What kept Focus from adding more today: its share of the week was used, the rest was kept for a
+ * muscle whose turn it is, or the workout would have gone past its usual length.
+ */
+export type FocusHeld = 'week' | 'turn' | 'time';
 
 export interface FocusFit {
   exerciseIds: string[];
@@ -123,6 +301,8 @@ export interface FocusFit {
   extra: FocusExtra[];
   /** One a workout, so the workout stays the user's own. */
   sometimes?: SometimesPick;
+  /** Set only when a limit really kept out something Focus would have added. */
+  held?: FocusHeld;
 }
 
 /**
@@ -132,7 +312,7 @@ export interface FocusFit {
  * back every week, but this comes round every three, and a limit would keep out exactly the hard
  * exercises the mark is for.
  *
- * Then it brings in work for the Focus muscles that are short this week, the shortest first, one
+ * Then it brings in work for the Focus muscles that are short this week, in turn (see below), one
  * exercise for each. What the user has done comes first, and only then something new. It can't take
  * the workout more than ROOM over its usual cost, or the next one is tried, and with none left the
  * muscle goes without today. An exercise that also trains what a filler trains takes that filler's place.
@@ -143,18 +323,31 @@ export interface FocusFit {
  *
  * A Focus muscle that can't join this day and is still short may get one light exercise mainly for it
  * here, so a muscle trained one day a week gets a second. One a workout, after the picks for muscles
- * that can join, and placed the same way. Not within REST_DAYS of its last main work, and not the day
+ * that can join unless it waited longer, and placed the same way. Not within REST_DAYS of its last main work, and not the day
  * before its own day, so it comes rested to the work that counts most.
  *
  * Last, a muscle still short gets a set more on exercises already planned for it, up to
  * MAX_EXTRA_SETS a workout and one an exercise. A muscle trained one day a week can't reach its range
  * with new exercises alone.
+ *
+ * All of it shares Focus's share of the week, `week` (see focusWeek): a new exercise costs its planned
+ * sets, a set more costs one, and with the share used up Focus adds nothing more. Muscles take turns: one
+ * that got nothing from Focus over the last 7 days goes first, of those the one that got least the week
+ * before, and then the furthest short. The first in line has what it needs kept for it: a new
+ * exercise's sets while today can't serve it, or the whole share left when today can but that's too
+ * little, so it comes first again next time. A muscle trained one day a week would otherwise find the
+ * week's share gone by its day. Nothing may take the workout past `maxSets`, its usual length and a
+ * little more; a pick that can't go on top for that can still take a filler's place, since the workout
+ * then stays as long as it was. `held` says which limit kept something out.
  */
 export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets, exercises: Map<string, Exercise>): FocusFit {
   const exerciseIds = [...plan.exerciseIds];
   const picks: FocusPick[] = [];
   const extra: FocusExtra[] = [];
   let sometimes: SometimesPick | undefined;
+  let held: FocusHeld | undefined;
+  let room = plan.week ? focusRoom(plan.week) : Infinity;
+  const given = new Map(plan.week?.given ?? []);
   const done = [...plan.recent, ...plan.older];
   const equipment = new Set(plan.recent.map((id) => exercises.get(id)!.equipment));
   const untried = [...exercises.values()]
@@ -169,11 +362,24 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
   const isHeavy = (id: string) => difficultyOf(exercises.get(id)!) !== 'light';
   const worksFor = (ids: string[], region: BodyRegion) =>
     ids.filter((id) => mainOf(id).includes(region)).length + HELPER_WEIGHT * ids.filter((id) => helpersOf(id).includes(region)).length;
+  const planned = (id: string) => plan.setsOf?.(id) ?? PLANNED_SETS;
+  const workoutSets = () => exerciseIds.reduce((sum, id) => sum + planned(id), 0) + extra.length;
+  /** Adding `sets` keeps the workout within its usual length, or no longer than it already was. */
+  const fitsTime = (sets: number) => plan.maxSets === undefined || sets <= 0 || workoutSets() + sets <= plan.maxSets;
+  const giveTo = (region: BodyRegion, sets: number) => {
+    room -= sets;
+    given.set(region, (given.get(region) ?? 0) + sets);
+  };
   const shortBy = (region: BodyRegion) =>
     regionRange(region, 'focus').low -
     setsOf(week, region) -
     PLANNED_SETS * worksFor(exerciseIds, region) -
     worksFor(extra.map((e) => e.exerciseId), region);
+  /** A muscle that got nothing from Focus over the last 7 days is waiting its turn. Without `week`, none is. */
+  const waiting = (region: BodyRegion) => plan.week !== undefined && (given.get(region) ?? 0) < 1;
+  const lately = (region: BodyRegion) => (plan.week ? (given.get(region) ?? 0) + (plan.week.earlier.get(region) ?? 0) : 0);
+  /** Turns: a muscle that's waiting first, the one that got least over two weeks first, then the furthest short. */
+  const byTurn = (a: BodyRegion, b: BodyRegion) => Number(waiting(b)) - Number(waiting(a)) || lately(a) - lately(b) || shortBy(b) - shortBy(a);
   const joins = (muscle: Muscle) => plan.groups.includes(groupOf(muscle)) || plan.partners.includes(muscle) || ANY_DAY.includes(muscle);
   const canPick = (id: string, region: BodyRegion) =>
     mainOf(id).includes(region) && !exerciseIds.includes(id) && !plan.leftOut.includes(id) && !plan.avoid?.has(id) && joins(muscleOf(id));
@@ -210,15 +416,39 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
 
   let onTop = false;
   /**
+   * The muscle first in line. While it waits, what it needs is kept for it: a new exercise's sets when
+   * it can't be served today, or all of it when it can but the room is too small, so it comes first next time.
+   */
+  let first: BodyRegion | undefined;
+  let firstBlocks = false;
+  const roomFor = (region: BodyRegion) => {
+    if (first === undefined || region === first || !waiting(first)) return room;
+    return firstBlocks ? 0 : room - PLANNED_SETS;
+  };
+  /** Too little room for `sets`: notes why. */
+  const noRoom = (region: BodyRegion, sets: number) => {
+    if (sets <= roomFor(region)) return false;
+    held ??= sets <= room ? 'turn' : 'week';
+    if (region === first && sets <= (plan.week?.budget ?? Infinity)) firstBlocks = true;
+    return true;
+  };
+  /**
    * Brings `id` in for `region` if it fits: in the place of `overlap`, the filler for its other main
    * muscle, or else on top, or in the place of a filler.
    */
   const tryPick = (id: string, region: BodyRegion, overlap: string | undefined, otherDay = false): boolean => {
-    const fitsOnTop = overlap === undefined && exerciseIds.length < plan.max && withinLimit(id);
+    const roomOnTop = overlap === undefined && exerciseIds.length < plan.max && withinLimit(id);
+    const fitsOnTop = roomOnTop && fitsTime(planned(id));
     const replaced = fitsOnTop && !onTop ? undefined : (overlap ?? fillerToSwap());
     // With no filler to give up its place, a second one can go on top too, if that fits.
     const goesOnTop = replaced === undefined && fitsOnTop;
-    if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced))) return false;
+    if (!goesOnTop && (replaced === undefined || !withinLimit(id, replaced) || !fitsTime(planned(id) - planned(replaced)))) {
+      // It would have gone on top but for the workout's length.
+      if (roomOnTop && !fitsOnTop && (!onTop || replaced === undefined)) held ??= 'time';
+      return false;
+    }
+    if (noRoom(region, planned(id))) return false;
+    giveTo(region, planned(id));
     const pick: FocusPick = { exerciseId: id, region, fresh: !done.includes(id) };
     if (goesOnTop) onTop = true;
     else {
@@ -252,16 +482,6 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
   }
 
   const candidates = [...done, ...untried];
-  const order = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0).sort((a, b) => shortBy(b) - shortBy(a));
-  for (const region of order) {
-    if (picks.length >= MAX_FOCUS) break;
-    // A pick for an earlier muscle may have covered this one.
-    if (shortBy(region) <= 0) continue;
-    for (const id of candidates) {
-      if (canPick(id, region) && tryPick(id, region, sameWork(id, region))) break;
-    }
-  }
-
   // Light work for a muscle on another day than its own: rested from its main work and not due tomorrow.
   const today = plan.today;
   const nextJoins = (muscle: Muscle) => !!plan.nextGroups && (plan.nextGroups.includes(groupOf(muscle)) || !!plan.nextPartners?.includes(muscle));
@@ -277,12 +497,25 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
     !plan.avoid?.has(id) &&
     !joins(muscleOf(id)) &&
     !nextJoins(muscleOf(id));
-  if (today !== undefined && picks.length < MAX_FOCUS) {
-    const otherDay = BODY_REGIONS.filter(
-      (region) => goals[region] === 'focus' && shortBy(region) > 0 && rested(region) && !exerciseIds.some((id) => mainOf(id).includes(region)),
-    ).sort((a, b) => shortBy(b) - shortBy(a));
-    search: for (const region of otherDay) {
-      for (const id of candidates) if (canPickOtherDay(id, region) && tryPick(id, region, undefined, true)) break search;
+  const otherDayFor = (region: BodyRegion) => today !== undefined && rested(region) && !exerciseIds.some((id) => mainOf(id).includes(region));
+
+  // Turns; of muscles level on those, one that can join this day before light work for another's day.
+  const order = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0)
+    .map((region) => ({ region, own: candidates.some((id) => canPick(id, region)) }))
+    .sort(
+      (a, b) =>
+        Number(waiting(b.region)) - Number(waiting(a.region)) || lately(a.region) - lately(b.region) || Number(!a.own) - Number(!b.own) || shortBy(b.region) - shortBy(a.region),
+    );
+  if (plan.week && order.length && waiting(order[0].region)) first = order[0].region;
+  let otherDayDone = false;
+  for (const { region, own } of order) {
+    if (picks.length >= MAX_FOCUS) break;
+    // A pick for an earlier muscle may have covered this one.
+    if (shortBy(region) <= 0) continue;
+    if (own) {
+      for (const id of candidates) if (canPick(id, region) && tryPick(id, region, sameWork(id, region))) break;
+    } else if (!otherDayDone && otherDayFor(region)) {
+      otherDayDone = candidates.some((id) => canPickOtherDay(id, region) && tryPick(id, region, undefined, true));
     }
   }
 
@@ -297,11 +530,17 @@ export function applyFocus(plan: FocusPlan, goals: RegionGoals, week: RegionSets
       .at(0);
   while (extra.length < MAX_EXTRA_SETS) {
     const next = BODY_REGIONS.filter((region) => goals[region] === 'focus' && shortBy(region) > 0)
-      .sort((a, b) => shortBy(b) - shortBy(a))
+      .sort(byTurn)
       .map((region) => ({ region, exerciseId: lightestFor(region) }))
       .find((candidate) => candidate.exerciseId !== undefined);
     if (!next) break;
+    if (!fitsTime(1)) {
+      held ??= 'time';
+      break;
+    }
+    if (noRoom(next.region, 1)) break;
+    giveTo(next.region, 1);
     extra.push({ exerciseId: next.exerciseId!, region: next.region });
   }
-  return { exerciseIds, picks, extra, sometimes };
+  return held ? { exerciseIds, picks, extra, sometimes, held } : { exerciseIds, picks, extra, sometimes };
 }

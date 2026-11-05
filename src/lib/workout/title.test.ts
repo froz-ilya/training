@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { CATALOG } from '../catalog/exercises';
-import { mainGroups } from '../catalog/groups';
+import { mainGroups, namingSets } from '../catalog/groups';
 import { setUiLang } from '../i18n.svelte';
 import type { Exercise } from '../types';
 import { groupWork, typeTitle, workoutTitle } from './title';
@@ -53,6 +53,19 @@ describe('workout titles', () => {
     expect(day(['barbell-bench-press', 'incline-barbell-press', 'lateral-raise', 'rope-pushdown', 'lying-leg-curl'])).toBe('Chest, shoulders');
     expect(day(['leg-press', 'barbell-squat', 'lying-leg-curl', 'lateral-raise'])).toBe('Legs, shoulders');
     expect(day(['leg-extension', 'lying-leg-curl', 'standing-calf-raise'])).toBe('Legs');
+  });
+
+  it('leave out the sets Focus added, so a set more doesn’t change the name', () => {
+    // 12 sets for legs and 3 for shoulders: shoulders just make a fifth.
+    const ids = ['smith-squat', 'leg-press', 'leg-extension', 'lying-leg-curl', 'lateral-raise'];
+    const sets = ids.flatMap((id, entry) => [set(id, entry), set(id, entry), set(id, entry)]);
+    expect(workoutTitle(mainGroups(groupWork(sets, exercises)))).toBe('Legs, shoulders');
+    expect(workoutTitle(mainGroups(groupWork([...sets, set('smith-squat', 0)], exercises)))).toBe('Legs');
+    expect(workoutTitle(mainGroups(groupWork([...sets, { ...set('smith-squat', 0), extra: true }], exercises)))).toBe('Legs, shoulders');
+    // A planned workout, as the Today card and the logger read it.
+    const planned = ids.map((id) => ({ exercise: exercises.get(id)!, sets: [set(id, 0), set(id, 0), set(id, 0)] as { kind: string; extra?: boolean }[] }));
+    planned[0].sets.push({ kind: 'work', extra: true });
+    expect(workoutTitle(mainGroups(planned.map(({ exercise, sets }) => ({ exercise, sets: namingSets(sets) }))))).toBe('Legs, shoulders');
   });
 
   it('go by a custom exercise’s muscle, and skip an exercise that’s gone', () => {

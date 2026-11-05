@@ -35,7 +35,7 @@
     updateWorkout,
     type Performance,
   } from '../lib/db/repo';
-  import { mainGroups } from '../lib/catalog/groups';
+  import { mainGroups, namingSets } from '../lib/catalog/groups';
   import { db } from '../lib/db/schema';
   import { isOffDay } from '../lib/notes/tags';
   import { getExercise, nameOf } from '../lib/exercises.svelte';
@@ -78,7 +78,7 @@
     workoutTitle(
       mainGroups(
         details.flatMap(({ entry, exercise }) =>
-          exercise ? [{ exercise, sets: entry.sets.filter((s) => s.kind === 'work').length }] : [],
+          exercise ? [{ exercise, sets: namingSets(entry.sets) }] : [],
         ),
       ),
     ),

@@ -2,6 +2,7 @@
   import Sheet from '../Sheet.svelte';
   import BodyMap from './BodyMap.svelte';
   import { hasEnoughHistory, regionRange, regionStatus, type BodyLoad, type RegionStatus } from '../../lib/coach/balance';
+  import { MANY_FOCUS } from '../../lib/coach/focus';
   import { nameOf } from '../../lib/exercises.svelte';
   import { fmtNumber, t, tn } from '../../lib/i18n.svelte';
   import { saveSettings, settings } from '../../lib/settings.svelte';
@@ -33,6 +34,7 @@
     }),
   );
   const row = $derived(rows.find((r) => r.region === picked));
+  const focusCount = $derived(Object.values(settings.regionGoals).filter((goal) => goal === 'focus').length);
   const range = $derived(row && regionRange(row.region, row.goal));
 
   function pick(region: BodyRegion) {
@@ -93,6 +95,9 @@
           {/each}
         </div>
         <p class="muted small reason">{t(`progress.body.goalHint.${row.goal ?? 'usual'}`)}</p>
+        {#if row.goal === 'focus' && focusCount > MANY_FOCUS}
+          <p class="muted small reason">{t('progress.body.goalShared')}</p>
+        {/if}
       </div>
 
       <div>

@@ -48,6 +48,14 @@ export function dayWork<T extends { exercise: GroupExercise }>(work: T[]): T[] {
   return work.filter(({ exercise }) => !lightDayWork(exercise) || heavier.has(groupOf(exercise.muscle)));
 }
 
+/**
+ * Work sets as a day's groups count them. Focus's extra sets are left out, so a set more on a Smith
+ * squat doesn't turn "Legs, shoulders" into "Legs".
+ */
+export function namingSets(sets: readonly { kind: string; extra?: boolean }[]): number {
+  return sets.filter((set) => set.kind === 'work' && !set.extra).length;
+}
+
 /** Groups a workout is usually built around; arms and core mostly finish one off. */
 const LARGE: readonly MuscleGroup[] = ['chest', 'back', 'legs', 'shoulders'];
 /** Share of a workout's sets a group needs to be named. */

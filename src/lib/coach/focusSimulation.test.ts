@@ -3,8 +3,11 @@ import { CATALOG } from '../catalog/exercises';
 import { BODY_REGIONS } from '../catalog/regions';
 import { fromISODate, toISODate } from '../dates';
 import type { BodyRegion, Exercise, RegionGoal } from '../types';
+import { regionsOf } from '../catalog/regions';
 import { bodyLoad, regionRange, regionStatus, type RegionStatus, type SetRange } from './balance';
-import { planNextType, type FocusExtra, type FocusPick, type RotationWorkout } from './next';
+import { focusWeek } from './focus';
+import { planNextType, workoutTypes, type FocusExtra, type FocusPick, type RotationWorkout } from './next';
+import { median } from './position';
 
 /**
  * Plays weeks of planned workouts and reads what the Progress body map would show at the end, to
@@ -31,12 +34,15 @@ const addDays = (date: string, days: number) => {
   return toISODate(d);
 };
 
-const workout = (date: string, exerciseIds: string[], extra: FocusExtra[] = []): RotationWorkout => ({
-  id: date,
-  date,
-  exerciseIds,
-  workSets: Object.fromEntries(exerciseIds.map((id) => [id, SETS + extra.filter((e) => e.exerciseId === id).length])),
-});
+/** Minutes a work set takes this person, rest included. */
+const MINUTES_PER_SET = 3;
+
+const workout = (date: string, exerciseIds: string[], extra: FocusExtra[] = []): RotationWorkout => {
+  const added = Object.fromEntries(exerciseIds.map((id) => [id, extra.filter((e) => e.exerciseId === id).length]));
+  const workSets = Object.fromEntries(exerciseIds.map((id) => [id, SETS + added[id]]));
+  const sets = Object.values(workSets).reduce((sum, n) => sum + n, 0);
+  return { id: date, date, exerciseIds, workSets, extra: added, minutes: sets * MINUTES_PER_SET };
+};
 
 interface SimOptions {
   /** Weeks of plain push, pull and legs before goals apply. */
@@ -51,6 +57,11 @@ interface PlannedDay {
   exerciseIds: string[];
   focus: FocusPick[];
   extraSets: FocusExtra[];
+  /** Focus's share of the 7 days up to this one, and what it had given before this workout. */
+  budget: number;
+  givenBefore: number;
+  /** The type's usual minutes, from the workouts before this one. */
+  usualMinutes: number;
 }
 
 interface RegionResult {
@@ -68,8 +79,12 @@ interface SimResult {
 function simulate(goals: Goals, { historyWeeks = 3, weeks = 6 }: SimOptions = {}): SimResult {
   const rotation = [PUSH, PULL, LEGS];
   const history: RotationWorkout[] = [];
+  const keys: string[] = [];
   for (let week = 0; week < historyWeeks; week++) {
-    for (const day of WORKOUT_DAYS) history.push(workout(addDays(START, week * 7 + day), rotation[history.length % rotation.length]));
+    for (const day of WORKOUT_DAYS) {
+      keys.push(['chest', 'back', 'legs'][history.length % rotation.length]);
+      history.push(workout(addDays(START, week * 7 + day), rotation[history.length % rotation.length]));
+    }
   }
 
   const days: PlannedDay[] = [];
@@ -79,7 +94,11 @@ function simulate(goals: Goals, { historyWeeks = 3, weeks = 6 }: SimOptions = {}
       const plan = planNextType(history, exercises, { today: date, perWeek: WORKOUT_DAYS.length }, {}, goals);
       if (!plan) throw new Error(`nothing planned on ${date}`);
       const extraSets = plan.extraSets ?? [];
-      days.push({ date, key: plan.key, exerciseIds: plan.exerciseIds, focus: plan.focus, extraSets });
+      const { budget, given } = focusWeek(history, exercises, goals, date, workoutTypes(history, exercises, date));
+      const usualMinutes = median(history.filter((_, i) => keys[i] === plan.key).slice(-10).map((w) => w.minutes!));
+      const givenBefore = [...given.values()].reduce((sum, sets) => sum + sets, 0);
+      days.push({ date, key: plan.key, exerciseIds: plan.exerciseIds, focus: plan.focus, extraSets, budget, givenBefore, usualMinutes });
+      keys.push(plan.key);
       history.push(workout(date, plan.exerciseIds, extraSets));
     }
   }
@@ -100,6 +119,22 @@ function table({ goals, regions }: SimResult): string {
     const goal = goals[region] ? ` (${goals[region]})` : '';
     return `${region}${goal}: ${perWeek}/wk, range ${range.low}-${range.high}, ${status}`;
   }).join('\n');
+}
+
+/** What Focus added to a planned workout, in work sets: a new exercise at its usual three. */
+const added = (day: PlannedDay) => day.focus.length * SETS + day.extraSets.length;
+
+/** Main work sets each region got in each planned week. */
+function mainSetsPerWeek({ days }: SimResult): Map<BodyRegion, number>[] {
+  const weeks: Map<BodyRegion, number>[] = [];
+  days.forEach((day, i) => {
+    const week = (weeks[Math.floor(i / WORKOUT_DAYS.length)] ??= new Map());
+    for (const id of day.exerciseIds) {
+      const sets = SETS + day.extraSets.filter((e) => e.exerciseId === id).length;
+      for (const region of regionsOf(exercises.get(id)!).main) week.set(region, (week.get(region) ?? 0) + sets);
+    }
+  });
+  return weeks;
 }
 
 /** One line per planned workout, with what Focus brought in and the extra sets. */
@@ -180,18 +215,42 @@ describe('Focus simulation', () => {
     expect(run.regions.quads.status, `${table(run)}\n${plans(run)}`).toBe('normal');
   });
 
-  // Later targets, not reached yet: flip `it.fails` to `it` once they are. Measured with extraSets
-  // and light work on another day: hamstrings 4/wk (9-24) alongside quads; with five muscles,
-  // sideDelts 8 and biceps 8 (9-30), quads 11 (12-30) and hamstrings 4, while chest reaches 12.
+  // Later targets, not reached yet: flip `it.fails` to `it` once it is. Hamstrings start from no work
+  // at all and train on one day a week, and they share that day's one free slot with quads. Phase 3
+  // gives the slot to the one that got nothing from Focus over the last 7 days, which here is quads
+  // most weeks: hamstrings stay at 4/wk (9-24) while quads keep 12.
   it.fails('brings quads and hamstrings both into range', () => {
     const run = runs['quads+hamstrings'];
     for (const region of ['quads', 'hamstrings'] as const) expect(run.regions[region].status, `${region}\n${table(run)}`).toBe('normal');
   });
 
-  it.fails('brings five Focus muscles all into range', () => {
+  // Phase 3: with five Focus muscles, Focus shares out a fifth of the usual week rather than adding
+  // two exercises and four sets to every workout. Not all of them reach their range, but each gets
+  // its turn.
+  it('keeps Focus to its share of the week and each workout near its usual length', () => {
+    for (const [name, run] of Object.entries(runs)) {
+      for (const day of run.days) {
+        const line = `${name} ${day.date}\n${plans(run)}`;
+        expect(day.givenBefore + added(day), line).toBeLessThanOrEqual(day.budget);
+        const grows = day.extraSets.length > 0 || day.focus.some((pick) => !pick.replaced);
+        const minutes = (day.exerciseIds.length * SETS + day.extraSets.length) * MINUTES_PER_SET;
+        if (grows) expect(minutes, line).toBeLessThanOrEqual(day.usualMinutes + 15);
+      }
+    }
+  });
+
+  it('gives each of five Focus muscles some Focus work at least every other week', () => {
     const run = runs['five muscles'];
-    for (const region of ['chest', 'quads', 'hamstrings', 'sideDelts', 'biceps'] as const) {
-      expect(run.regions[region].status, `${region}\n${table(run)}`).toBe('normal');
+    const weeks = mainSetsPerWeek(run);
+    const plain = mainSetsPerWeek(baseline);
+    const perWeek = WORKOUT_DAYS.length;
+    for (let block = 0; block < weeks.length; block += 2) {
+      const days = run.days.slice(block * perWeek, (block + 2) * perWeek);
+      const sum = (list: Map<BodyRegion, number>[], region: BodyRegion) => list.slice(block, block + 2).reduce((total, week) => total + (week.get(region) ?? 0), 0);
+      for (const region of ['chest', 'quads', 'hamstrings', 'sideDelts', 'biceps'] as const) {
+        const picked = days.some((day) => day.focus.some((pick) => pick.region === region) || day.extraSets.some((e) => e.region === region));
+        expect(picked || sum(weeks, region) > sum(plain, region), `${region}, weeks ${block + 1}-${block + 2}\n${plans(run)}`).toBe(true);
+      }
     }
   });
 });

@@ -103,13 +103,28 @@ migration that is tested.
   exercises already planned for it, lightest first, one an exercise and four a workout, unless that
   exercise's plan is easing off (pain, a break, a lighter week). Those sets are stored with
   `extra: true`: the usual set count leaves them out, so turning Focus off goes straight back to it,
-  while everything else counts them as work.
+  while everything else counts them as work. All Focus adds in 7 days shares a fifth of the usual
+  week's work sets (median of the last 4 weeks with workouts), at least 4. Nothing new is stored for
+  it, so only what Focus can be shown to have added counts (`focusWeek()`): its extra sets, light chest,
+  back or legs work on another type's day, and an exercise new to its type, one that type's workouts
+  in the 8 weeks before didn't have. That counts for its first 7 days. The plan keeps a type's usual
+  number of exercises, so a pick it doesn't keep yet comes back on top: a workout past that number
+  also counts what's over it, while that exercise is in under half of the type's workouts. Plain work
+  never counts, so a type trained twice in 7 days uses none of the share, and today's plan doesn't
+  count either. A new exercise counts at its usual sets. Muscles
+  take turns: one that got nothing from Focus in 7 days goes first, and what it needs is kept for it
+  until its day comes. A workout with Focus additions stays within its type's usual length plus 15
+  minutes, at the user's own minutes a set; with no timed workouts there's no limit. The next-workout
+  card says when one of these held Focus back, and the goal picker says when more than three muscles
+  share it.
   Maintain drops fillers once its range is met. Main lifts and weights don't change.
 - Dates are local `YYYY-MM-DD` strings (src/lib/dates.ts).
 - Workout titles are derived from the muscle groups trained (src/lib/workout/title.ts) and never
   stored, so they follow the interface language. They read a day as the rotation does (`dayWork()` in
   src/lib/catalog/groups.ts): light work for chest, back or legs is left out, sets and all, when another
-  of them had medium or hard work. A day of only light work for them is read in full.
+  of them had medium or hard work. A day of only light work for them is read in full. Focus's extra
+  sets don't count towards a title or the rotation's reading (`namingSets()`), so a set more never
+  changes a day's name.
 - Sets: a new set starts with last time's `failure` mark, so someone who always trains to failure only
   taps the exception, and only done sets count. `level` is copied too, and reps are never compared
   across levels, because whether higher is easier depends on the exercise.

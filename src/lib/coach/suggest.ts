@@ -143,7 +143,7 @@ const FATIGUE_HOLD = 0.02;
 const FATIGUE_DROP = 0.05;
 const DEFAULT_WORK_SETS = 3;
 /** Sessions the usual number of work sets comes from. */
-const USUAL_SETS_SESSIONS = 6;
+export const USUAL_SETS_SESSIONS = 6;
 
 const breakLength = (tier: BreakTier, gap: number) => Math.max(tier.days, tier.gaps * gap);
 

@@ -33,6 +33,8 @@ export interface Snapshot {
   workouts: Workout[];
   sets: WorkoutSet[];
   notes?: ExerciseNote[];
+  /** Sets the change added, which "Undo" takes out again. */
+  added?: string[];
 }
 
 export function deleteWorkout(id: string): Promise<Snapshot> {
@@ -52,6 +54,7 @@ export function restoreSnapshot(snapshot: Snapshot): Promise<void> {
     await db.workouts.bulkPut(snapshot.workouts);
     await db.sets.bulkPut(snapshot.sets);
     await db.exerciseNotes.bulkPut(snapshot.notes ?? []);
+    await db.sets.bulkDelete(snapshot.added ?? []);
   });
 }
 
@@ -205,13 +208,16 @@ export function applyPlan(workoutId: string, entry: number, sets: PlannedSet[]):
     const first = current[0];
     if (!first) return;
     const kept = current.filter((s) => s.done);
-    await db.sets.bulkDelete(current.filter((s) => !s.done).map((s) => s.id));
     // Sets already done count towards the plan: a finished warm-up isn't repeated.
     const left = { warmup: kept.filter((s) => s.kind === 'warmup').length, work: kept.filter((s) => s.kind === 'work').length };
     const remaining = sets.filter((set) => (left[set.kind]-- > 0 ? false : true));
     const rows = planRows({ workoutId, exerciseId: first.exerciseId, date: first.date, entry }, remaining);
     const start = Math.max(-1, ...kept.map((s) => s.order)) + 1;
-    await db.sets.bulkAdd(rows.map((row, i) => ({ ...row, order: start + i })));
+    // Open sets keep their ids, so the rows on screen change in place and a set's comment stays with it.
+    const open = { warmup: current.filter((s) => !s.done && s.kind === 'warmup'), work: current.filter((s) => !s.done && s.kind === 'work') };
+    const placed = rows.map((row, i) => ({ ...row, id: open[row.kind].shift()?.id ?? row.id, order: start + i }));
+    await db.sets.bulkDelete([...open.warmup, ...open.work].map((s) => s.id));
+    await db.sets.bulkPut(placed);
     await touch(workoutId);
   });
 }
@@ -270,21 +276,50 @@ export function addExercise(workoutId: string, exerciseId: string): Promise<numb
     if (!workout) throw new Error('No such workout');
     const existing = await db.sets.where('workoutId').equals(workoutId).toArray();
     const entry = Math.max(-1, ...existing.map((s) => s.entry)) + 1;
-    const last = await lastPerformance(exerciseId, { before: workout.date, excludeWorkoutId: workoutId });
-    const base = { workoutId, exerciseId, date: workout.date, entry, done: workout.status === 'done' };
-    const usual = last?.sets.filter((s) => !s.extra) ?? [];
-    const sets: WorkoutSet[] = usual.length
-      ? usual.map((s, order) => {
-          const set: WorkoutSet = { ...base, id: newId(), order, kind: s.kind, weightKg: s.weightKg, reps: s.reps };
-          if (s.seconds !== undefined) set.seconds = s.seconds;
-          if (s.level !== undefined) set.level = s.level;
-          if (s.failure) set.failure = true;
-          return set;
-        })
-      : [{ ...base, id: newId(), order: 0, kind: 'work', weightKg: 0, reps: 0 }];
+    const sets = await startingSets({ workoutId, exerciseId, date: workout.date, entry, done: workout.status === 'done' });
     await db.sets.bulkAdd(sets);
     await touch(workoutId);
     return entry;
+  });
+}
+
+/** A new exercise's sets: what was done last time, without Focus's extra sets, or one empty set. */
+async function startingSets(base: Pick<WorkoutSet, 'workoutId' | 'exerciseId' | 'date' | 'entry' | 'done'>): Promise<WorkoutSet[]> {
+  const last = await lastPerformance(base.exerciseId, { before: base.date, excludeWorkoutId: base.workoutId });
+  const usual = last?.sets.filter((s) => !s.extra) ?? [];
+  return usual.length
+    ? usual.map((s, order) => {
+        const set: WorkoutSet = { ...base, id: newId(), order, kind: s.kind, weightKg: s.weightKg, reps: s.reps };
+        if (s.seconds !== undefined) set.seconds = s.seconds;
+        if (s.level !== undefined) set.level = s.level;
+        if (s.failure) set.failure = true;
+        return set;
+      })
+    : [{ ...base, id: newId(), order: 0, kind: 'work', weightKg: 0, reps: 0 }];
+}
+
+/**
+ * Puts `exerciseId` in the place of the exercise at `entry`, with the sets it would get if added.
+ * Only for an exercise with nothing done yet, so no logged work is lost. Its comments go with it,
+ * unless the workout has it a second time.
+ */
+export function replaceExercise(workoutId: string, entry: number, exerciseId: string): Promise<Snapshot> {
+  return db.transaction('rw', [db.workouts, db.sets, db.exerciseNotes, db.customExercises], async () => {
+    const workout = await db.workouts.get(workoutId);
+    if (!workout || workout.status === 'done') throw new Error('Workout is finished');
+    const all = await db.sets.where('workoutId').equals(workoutId).toArray();
+    const sets = all.filter((s) => s.entry === entry);
+    if (!sets.length || sets.some((s) => s.done)) throw new Error('Exercise has done sets');
+    const others = new Set(all.filter((s) => s.entry !== entry).map((s) => s.exerciseId));
+    const old = sets[0].exerciseId;
+    const notes = await db.exerciseNotes.where('workoutId').equals(workoutId).toArray();
+    const removed = notes.filter((n) => n.exerciseId === old && !others.has(n.exerciseId));
+    const added = await startingSets({ workoutId, exerciseId, date: workout.date, entry, done: false });
+    await db.sets.bulkDelete(sets.map((s) => s.id));
+    await db.exerciseNotes.bulkDelete(removed.map((n) => n.id));
+    await db.sets.bulkAdd(added);
+    await touch(workoutId);
+    return { workouts: [], sets, notes: removed, added: added.map((s) => s.id) };
   });
 }
 

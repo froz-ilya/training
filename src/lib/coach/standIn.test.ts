@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CATALOG } from '../catalog/exercises';
 import type { Equipment, Exercise } from '../types';
-import { findStandIn, replaceAvoided } from './standIn';
+import { findStandIn, replaceAvoided, replacementOptions } from './standIn';
 
 const catalog = new Map<string, Exercise>(CATALOG.map((e) => [e.id, e]));
 const NONE = new Set<string>();
@@ -136,4 +136,36 @@ describe('replaceAvoided', () => {
   it('leaves a list with nothing avoided as it is', () => {
     expect(replace(['barbell-squat', 'leg-press'], [])).toEqual({ exerciseIds: ['barbell-squat', 'leg-press'], standIns: [] });
   });
+});
+
+describe('replacementOptions', () => {
+  const optionsFor = (id: string, done: string[] = [], taken: Set<string> = NONE, avoid: Set<string> = NONE) =>
+    replacementOptions(catalog.get(id)!, catalog, avoid, taken, done).map((o) => o.exercise.id);
+
+  it('starts with the stand-in the plan would pick', () => {
+    const done = ['barbell-squat', 'smith-squat'];
+    expect(optionsFor('barbell-squat', done)[0]).toBe(standInFor('barbell-squat', done)?.exerciseId);
+  });
+
+  it('offers a few for the same muscle, never the exercise itself, one already in the workout or an avoided one', () => {
+    const options = optionsFor('hip-adductor', [], new Set(['leg-press']), new Set(['smith-squat']));
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.length).toBeLessThanOrEqual(4);
+    expect(options).not.toContain('hip-adductor');
+    expect(options).not.toContain('leg-press');
+    expect(options).not.toContain('smith-squat');
+    expect(options.every((id) => catalog.get(id)!.muscle === 'legs')).toBe(true);
+  });
+
+  it('puts what the user has done first', () => {
+    const options = replacementOptions(catalog.get('barbell-squat')!, catalog, NONE, NONE, ['leg-press']);
+    expect(options[0]).toEqual({ exercise: catalog.get('leg-press'), fresh: false });
+    expect(options.slice(1).every((o) => o.fresh)).toBe(true);
+  });
+});
+
+it('offers the same kind of lift for an exercise with no main region of its own', () => {
+  const options = replacementOptions(catalog.get('hip-adductor')!, catalog, NONE, NONE, []).map((o) => o.exercise);
+  expect(options.length).toBeGreaterThan(0);
+  expect(options.every((e) => e.muscle === 'legs' && !e.compound && e.load === 'weight')).toBe(true);
 });

@@ -20,6 +20,7 @@ import { alternateRange, lighterWeekActive, resolveOutcomes } from './plateau';
 import { countRecent, groupSummaries, type GroupSummary, type Overview } from './overview';
 import { adjustPoints, entryRanks, learnPositionCost } from './position';
 import { getSameMachine } from './sameMachine';
+import { replacementOptions } from './standIn';
 import { exerciseStatus, type ExerciseStatus } from './status';
 import { atLatestLevel, bodyKg, comparableBefore, isMeasured, markHeldBack, repRange, restartDate, sinceBaseline, strengthPoints, type PriorWork, type Session, type StrengthPoint } from './strength';
 import { BREAK_MIN_DAYS, suggestSets, type ReasonCode, type SetPlan, type Suggestion } from './suggest';
@@ -183,6 +184,27 @@ async function exerciseMap(): Promise<Map<string, Exercise>> {
 /** What the user doesn't want suggested. */
 function avoidedIds(saved: Map<string, ExerciseSettings>): Set<string> {
   return new Set([...saved.values()].filter((s) => s.avoid === true).map((s) => s.exerciseId));
+}
+
+/**
+ * What the coach offers in place of `exerciseId` in a workout, best first. `inWorkout` holds the
+ * workout's other exercises, which aren't offered again. What the user has done comes first.
+ */
+export async function loadReplacements(exerciseId: string, inWorkout: string[]): Promise<{ exercise: Exercise; fresh: boolean }[]> {
+  const [exercises, avoided, { sets, workouts }] = await Promise.all([
+    exerciseMap(),
+    db.exerciseSettings.filter((s) => s.avoid === true).toArray(),
+    finishedSets(),
+  ]);
+  const exercise = exercises.get(exerciseId);
+  if (!exercise) return [];
+  const lastUsed = new Map<string, string>();
+  for (const set of sets) {
+    const date = workouts.get(set.workoutId)?.date ?? '';
+    if (date > (lastUsed.get(set.exerciseId) ?? '')) lastUsed.set(set.exerciseId, date);
+  }
+  const done = [...lastUsed.keys()].sort((a, b) => lastUsed.get(a)!.localeCompare(lastUsed.get(b)!));
+  return replacementOptions(exercise, exercises, new Set(avoided.map((s) => s.exerciseId)), new Set(inWorkout), done);
 }
 
 /** The exercises the user doesn't want suggested, in no particular order. */

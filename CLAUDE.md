@@ -164,6 +164,13 @@ migration that is tested.
   user can still add it by hand. History, the rotation and Progress keep reading it. A plan swaps it for a
   stand-in (src/lib/coach/standIn.ts) that trains the same main region, what the user has done first, or
   drops it if nothing fits. Anything new that suggests an exercise has to leave avoided ones out.
+- Replacing: in a workout that isn't finished, an exercise with nothing done yet can be swapped from its
+  menu (`replaceExercise()`), in the same place, with the sets it would get if added. The picker offers
+  `replacementOptions()` (src/lib/coach/standIn.ts) first: the plan's stand-ins, then the same muscle and
+  region in any kind of lift, then the same kind of lift for the muscle. It also sets how the replaced
+  exercise comes back in plans, the same Suggest / Sometimes / Don't suggest as its page.
+- Applying a suggestion ("Use") updates the open sets in place, keeping their ids, so rows don't
+  close and reopen.
 - Sometimes: `sometimes` in `exerciseSettings` is for a hard exercise the user wants to do now and then
   (src/lib/coach/sometimes.ts). `avoid` wins if a row has both. It goes by the date last done, not the
   rotation's window, so skipping it never makes it drop out. From 21 days after it was last done, or if

@@ -29,6 +29,7 @@
     removeExercise,
     removeSet,
     repeatWorkout,
+    replaceExercise,
     setMachineSetting,
     startWorkout,
     updateSet,
@@ -157,6 +158,13 @@
   });
 
   let pickerOpen = $state(false);
+  /** The exercise the picker is choosing a replacement for; none when it adds one. */
+  let replacing = $state<(typeof details)[number] | null>(null);
+
+  function openPicker(target: (typeof details)[number] | null) {
+    replacing = target;
+    pickerOpen = true;
+  }
   let detailsOpen = $state(false);
   // Held here while typing: a save coming back from the database must not rewrite the field.
   let draftNote = $state('');
@@ -185,6 +193,15 @@
   }
 
   function pickExercise(exerciseId: string) {
+    const target = replacing;
+    if (target) {
+      const entry = target.entry.entry;
+      return save(replaceExercise(id, entry, exerciseId), async (snapshot) => {
+        undoToast(t('workout.exerciseReplaced'), snapshot);
+        const sets = await db.sets.where('workoutId').equals(id).toArray();
+        if (logging) openSetId = groupEntries(sets).find((e) => e.entry === entry)?.sets.find((s) => !s.done)?.id ?? null;
+      });
+    }
     return save(addExercise(id, exerciseId), async (entry) => {
       const sets = await db.sets.where('workoutId').equals(id).toArray();
       if (logging) openSetId = groupEntries(sets).find((e) => e.entry === entry)?.sets.find((s) => !s.done)?.id ?? null;
@@ -225,6 +242,10 @@
     if (index < details.length - 1) items.push({ label: t('workout.moveDown'), run: () => save(moveExercise(id, entry.entry, 1)) });
     if (settings?.machineSetting || (exercise && ['machine', 'cable', 'smith'].includes(exercise.equipment))) {
       items.push({ label: t('workout.machineSetting'), icon: 'edit', run: () => editMachine(entry.exerciseId, settings?.machineSetting) });
+    }
+    // Swapping is for what's still to do: logged work stays as it was.
+    if (workout?.status !== 'done' && !entry.sets.some((s) => s.done)) {
+      items.push({ label: t('workout.replaceExercise'), icon: 'refresh', run: () => openPicker(detail) });
     }
     if (exercise) {
       items.push({ label: t('workout.openExercise'), icon: 'chart', run: () => go(`/exercise/${encodeURIComponent(entry.exerciseId)}`) });
@@ -372,7 +393,7 @@
     </div>
 
     <div class="bar" class:sticky={workout.status !== 'done' && !selected}>
-      <button class="btn add" aria-label={t('workout.addExercise')} onclick={() => (pickerOpen = true)}>
+      <button class="btn add" aria-label={t('workout.addExercise')} onclick={() => openPicker(null)}>
         <Icon name="plus" size={24} />
       </button>
       {#if logging}
@@ -400,7 +421,12 @@
       {/if}
     {/key}
 
-    <ExercisePicker bind:open={pickerOpen} onpick={pickExercise} />
+    <ExercisePicker
+      bind:open={pickerOpen}
+      onpick={pickExercise}
+      replacing={replacing?.exercise}
+      inWorkout={entries.map((e) => e.exerciseId)}
+    />
     {#if noteTarget}
       {#key noteTarget}
         <NoteSheet bind:open={noteOpen} target={noteTarget} />

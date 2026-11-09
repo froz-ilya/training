@@ -27,6 +27,7 @@ import {
   updateWorkout,
   applyPlan,
   createFromPlan,
+  replaceExercise,
 } from './repo';
 import { db, newId } from './schema';
 import { exportBackup } from './backup';
@@ -416,6 +417,57 @@ describe('plans', () => {
     const after = (await db.sets.where('workoutId').equals(id).toArray()).filter((s) => s.entry === 0).sort((a, b) => a.order - b.order);
     expect(after.map((s) => [s.weightKg, s.done])).toEqual([[20, true], [62.5, false], [62.5, false]]);
     expect(after.map((s) => s.order)).toEqual([0, 1, 2]);
+  });
+});
+
+describe('replacing an exercise', () => {
+  it('keeps the open sets when a suggestion is applied, so the rows change in place', async () => {
+    const id = await createFromPlan(
+      { exercises: [{ exerciseId: 'deadlift', sets: [{ kind: 'warmup', weightKg: 40, reps: 8 }, { kind: 'work', weightKg: 100, reps: 5 }] }] },
+      'active',
+    );
+    const before = await setsOf(id);
+    await applyPlan(id, 0, [
+      { kind: 'warmup', weightKg: 40, reps: 8 },
+      { kind: 'work', weightKg: 102.5, reps: 5 },
+      { kind: 'work', weightKg: 102.5, reps: 5 },
+    ]);
+    const after = (await setsOf(id)).sort((a, b) => a.order - b.order);
+    expect(after.map((s) => [s.kind, s.weightKg])).toEqual([['warmup', 40], ['work', 102.5], ['work', 102.5]]);
+    expect(after.slice(0, 2).map((s) => s.id)).toEqual(before.sort((a, b) => a.order - b.order).map((s) => s.id));
+
+    await applyPlan(id, 0, [{ kind: 'work', weightKg: 100, reps: 5 }]);
+    expect((await setsOf(id)).map((s) => s.kind)).toEqual(['work']);
+  });
+
+  it('puts the new exercise in the same place with last time’s sets, and undo brings the old one back', async () => {
+    await logged('2026-01-05', 'leg-press', [[120, 10], [120, 9]]);
+    const id = await createFromPlan(
+      {
+        exercises: [
+          { exerciseId: 'barbell-squat', sets: [{ kind: 'work', weightKg: 80, reps: 5 }] },
+          { exerciseId: 'hip-adductor', sets: [{ kind: 'work', weightKg: 40, reps: 12 }] },
+          { exerciseId: 'plank', sets: [{ kind: 'work', weightKg: 0, reps: 0, seconds: 60 }] },
+        ],
+      },
+      'active',
+    );
+    const before = await setsOf(id);
+    const snapshot = await replaceExercise(id, 1, 'leg-press');
+    const entries = groupEntries(await setsOf(id));
+    expect(entries.map((e) => e.exerciseId)).toEqual(['barbell-squat', 'leg-press', 'plank']);
+    expect(entries[1].sets.map((s) => [s.weightKg, s.reps, s.done])).toEqual([[120, 10, false], [120, 9, false]]);
+
+    await restoreSnapshot(snapshot);
+    expect((await setsOf(id)).map((s) => s.id).sort()).toEqual(before.map((s) => s.id).sort());
+  });
+
+  it('never replaces an exercise with work already done', async () => {
+    const id = await createFromPlan({ exercises: [{ exerciseId: 'hip-adductor', sets: [{ kind: 'work', weightKg: 40, reps: 12 }] }] }, 'active');
+    const [set] = await setsOf(id);
+    await updateSet(set.id, { done: true });
+    await expect(replaceExercise(id, 0, 'leg-press')).rejects.toThrow();
+    expect((await setsOf(id)).map((s) => s.exerciseId)).toEqual(['hip-adductor']);
   });
 });
 
